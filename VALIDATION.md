@@ -1,10 +1,12 @@
 # Validation record
 
-Built on Linux x64 on 2026-10-15. This describes evidence from this workspace, not an assertion that a Windows CI run or clean-machine test has occurred.
+Local builds and GitHub release v0.3.2 were verified on 2026-10-15. The [release workflow](https://github.com/WAN-Ninjas/WindowsLiteParser/actions/runs/38811066830) passed all 36 tests and packaged smoke checks on both `windows-latest` and Ubuntu 24.04, including Linux AppImage extraction mode. Its publication job completed successfully.
+
+The [published release](https://github.com/WAN-Ninjas/WindowsLiteParser/releases/tag/v0.3.2) contains the Windows EXE/ZIP, Linux AppImage/tar.gz, and `SHA256SUMS.txt`. All four published asset digests were independently compared with the public checksum manifest and matched. This verifies CI execution and download integrity; a clean Windows 11 normal-user machine still needs the checks listed below.
 
 ## Automated checks
 
-Release candidate 0.3.2 keeps the same 36 checks below and hardens headless smoke execution: software rendering is used only in smoke mode, transient compositor captures get five bounded retries, failures exit without an interactive error dialog, and the watchdog force-terminates the dedicated test process tree. Workflow smoke steps also have a five-minute limit. This addresses the `UnknownVizError` seen on the initial v0.3.1 release attempt; no release was published from that attempt.
+Release 0.3.2 keeps the same 36 checks below and hardens headless smoke execution: software rendering and Linux X11 are used only in smoke mode, compositor captures get five retries with two-second deadlines, failures exit without an interactive error dialog, and the watchdog force-terminates the dedicated test process tree. Workflow smoke steps also have a five-minute limit. This addresses the `UnknownVizError` seen on the initial v0.3.1 release attempt; no release was published from that attempt.
 
 Version 0.3.1: `npm run check` checks JavaScript syntax. `npm test` passes **36 tests**, covering release-tag/package-version validation, required release filenames and formats, exact SHA-256 manifests, checking uploaded asset names and sizes, literal source-label inference and matching, unique-example verification, rejecting ambiguous/mismatched examples, source labels with punctuation, new values in later documents in both quality modes, project scope, missed-field flags, saved drafts, protecting corrections during reanalysis, clearing protection, retention cleanup of feedback, v2/v3 database migration, dynamic fields, aligned tables and label/value pairs, high accuracy invoice layout, preservation of repeated and empty table cells, total mismatch and unknown-header warnings, real native parsing of a synthetic ten-line-item invoice, analysis settings, failed reanalysis preserving reviewed results, CSV quoting and formula protection, managed input copies, per-project duplicate detection, incremental schema expansion, manual field additions and corrections, retention after durable export, missing/blocked CSV handling, watched-folder stability and replacements, retry, restart recovery, portable data-folder relocation, database corruption, SQLite connection settings, bulk-history pagination, parser timeout, and native PDF parsing. Storage uses the disk-backed SQLite engine embedded in the bundled desktop runtime.
 
@@ -26,7 +28,6 @@ An additional Windows-on-Wine attempt did not complete the smoke test in the hea
 
 ## Remaining target-machine checks
 
-- Run the supplied Windows CI job and packaged smoke test on Windows.
 - On a clean Windows 11 x64 account without administrative rights or developer runtimes, run both the portable EXE and extracted ZIP with networking disabled. Check PDFs and scanned images, watch-folder imports, CSV corrections, retention, and restart recovery.
 - Exercise Excel file locking and output paths with spaces and non-ASCII characters on Windows; the core test simulates an unavailable destination, rather than an actual Excel lock.
 - Test supported Linux desktop distributions with their normal Chromium sandbox configuration. The local host is an Arch-derived distribution; the supplied CI targets Ubuntu 24.04.
