@@ -1,6 +1,6 @@
 {
   "name": "liteparse-portal",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Portable, offline document conversion with persistent projects and CSV exports",
   "author": "LiteParse Portal contributors",

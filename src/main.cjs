@@ -13,6 +13,11 @@ let service;
 let closing = false;
 const uiPath = path.join(__dirname, 'renderer', 'index.html');
 const uiUrl = pathToFileURL(uiPath).href;
+const smokeTest = process.argv.includes('--smoke-test');
+if (smokeTest) {
+  app.disableHardwareAcceleration();
+  if (process.platform === 'linux') app.commandLine.appendSwitch('ozone-platform', 'x11');
+}
 const explicitData = process.argv.find(arg => arg.startsWith('--data-dir='))?.slice('--data-dir='.length);
 if (explicitData) app.setPath('userData', path.resolve(explicitData, 'runtime'));
 app.setAppUserModelId('local.liteparse.portal');
@@ -134,7 +139,7 @@ async function boot() {
   await window.loadFile(uiPath);
   window.show();
   await service.start();
-  if (process.argv.includes('--smoke-test')) {
+  if (smokeTest) {
     await require('./smoke.cjs').run({ service, window });
     closing = true; await service.stop(); app.exit(0);
   }
@@ -143,6 +148,6 @@ async function boot() {
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); } });
-  app.whenReady().then(boot).catch(error => { console.error(error); dialog.showErrorBox('LiteParse Portal could not start', error.message); app.exit(1); });
+  app.whenReady().then(boot).catch(error => { console.error(error); if (!smokeTest) dialog.showErrorBox('LiteParse Portal could not start', error.message); app.exit(1); });
   app.on('window-all-closed', () => { if (closing) app.quit(); });
 }

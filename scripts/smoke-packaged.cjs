@@ -3,7 +3,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const os = require('node:os');
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const root = path.join(__dirname, '..');
 const target = process.argv[2] || process.platform;
 const appImage = target === 'appimage';
@@ -39,16 +39,21 @@ if (appImage) {
   else delete env.APPIMAGE_EXTRACT_AND_RUN;
 }
 const child = target === 'win32' && process.platform !== 'win32'
-  ? spawn('wine', [executable, ...args], { stdio: 'inherit', env })
-  : spawn(executable, args, { stdio: 'inherit', env });
-const timer = setTimeout(() => { console.error('Packaged smoke test timed out.'); child.kill(); }, 180000);
+  ? spawn('wine', [executable, ...args], { stdio: 'inherit', env, detached: true })
+  : spawn(executable, args, { stdio: 'inherit', env, detached: process.platform !== 'win32' });
+let timedOut = false;
+const timer = setTimeout(() => {
+  timedOut = true; console.error('Packaged smoke test timed out. Terminating its process tree.');
+  if (process.platform === 'win32') spawnSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore', timeout: 10000 });
+  else { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') console.error(error.message); } }
+}, 180000);
 child.on('error', error => { console.error(error.message); clearTimeout(timer); process.exitCode = 1; });
 child.on('exit', code => {
   clearTimeout(timer);
-  let result = code ?? 1;
+  let result = timedOut ? 1 : code ?? 1;
   if (result === 0 && expectedDatabase) {
     if (!fs.existsSync(expectedDatabase)) { console.error('AppImage did not keep its database beside the downloaded executable.'); result = 1; }
     else console.log('APPIMAGE PORTABILITY PASSED: default database is beside the AppImage, including paths with spaces.');
   }
-  fs.rmSync(directory, { recursive: true, force: true }); process.exitCode = result;
+  fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); process.exitCode = result;
 });

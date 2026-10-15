@@ -13,6 +13,24 @@ async function until(predicate, label, timeout = 60000) {
   while (!(await predicate())) { if (Date.now() > deadline) throw new Error(`Smoke test timed out: ${label}`); await new Promise(resolve => setTimeout(resolve, 50)); }
 }
 
+async function capture(window) {
+  let last;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let timer;
+    try {
+      const image = await Promise.race([
+        window.webContents.capturePage(),
+        new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Compositor capture did not respond within two seconds.')), 2000); })
+      ]);
+      if (!image.isEmpty()) return image;
+      last = new Error('The compositor returned an empty image.');
+    } catch (error) { last = error; }
+    finally { clearTimeout(timer); }
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+  throw new Error(`Screenshot capture failed after five attempts: ${last?.message || last}`);
+}
+
 async function run({ service, window }) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'portal-smoke-'));
   const evaluate = code => window.webContents.executeJavaScript(code);
@@ -89,7 +107,7 @@ async function run({ service, window }) {
     if (process.env.PORTAL_SMOKE_SCREENSHOT) {
       await fs.mkdir(path.dirname(process.env.PORTAL_SMOKE_SCREENSHOT), { recursive: true });
       const screenshot = process.env.PORTAL_SMOKE_SCREENSHOT.replace(/\.png$/i, '-review.png');
-      await fs.writeFile(screenshot, (await window.webContents.capturePage()).toPNG());
+      await fs.writeFile(screenshot, (await capture(window)).toPNG());
     }
     await evaluate('document.querySelector("#teach-reuse").checked=true; document.querySelector("#teach-save").click();');
     await until(() => evaluate('Boolean(document.querySelector("#review-fields input[name=payment_policy]"))'), 'taught field in review');
@@ -121,10 +139,11 @@ async function run({ service, window }) {
     await until(() => evaluate('document.querySelectorAll("#sidebar-collections button").length === 1'), 'project navigation');
     await evaluate('document.querySelector("#sidebar-collections button").click();');
     // Make an image-only input with a real browser renderer, then run bundled Tesseract.
-    const scan = new BrowserWindow({ width: 1100, height: 600, show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true } });
+    const scan = new BrowserWindow({ width: 1100, height: 600, show: false, webPreferences: { sandbox: true, nodeIntegration: false, contextIsolation: true, backgroundThrottling: false } });
     try {
       await scan.loadURL('data:text/html,' + encodeURIComponent('<html><head><style>body{background:white;color:black;font:32px Arial;padding:40px}p{margin:22px 0}</style></head><body><p>Vendor: Optical Supplies</p><p>Invoice Number: SCAN-300</p><p>Total: $75.00</p></body></html>'));
-      const image = await scan.webContents.capturePage();
+      scan.showInactive();
+      const image = await capture(scan);
       const file = path.join(root, 'scan.png'); await fs.writeFile(file, image.toPNG());
       await service.importPaths(project.id, [file]);
       await until(() => !service.running, 'bundled OCR', 90000);
@@ -135,7 +154,7 @@ async function run({ service, window }) {
     if (process.env.PORTAL_SMOKE_SCREENSHOT) {
       await until(() => evaluate('document.querySelectorAll("#documents tr").length === 3 && document.querySelector("#queue-status").textContent === "Ready to convert"'), 'final render');
       await fs.mkdir(path.dirname(process.env.PORTAL_SMOKE_SCREENSHOT), { recursive: true });
-      await fs.writeFile(process.env.PORTAL_SMOKE_SCREENSHOT, (await window.webContents.capturePage()).toPNG());
+      await fs.writeFile(process.env.PORTAL_SMOKE_SCREENSHOT, (await capture(window)).toPNG());
     }
     assert.equal(await evaluate('typeof window.require'), 'undefined');
     assert.equal(await evaluate('typeof window.process'), 'undefined');

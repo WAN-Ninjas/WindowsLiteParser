@@ -40,14 +40,17 @@ jobs:
         if: runner.os == 'Linux'
         run: npm run dist:linux -- --publish never
       - name: Exercise packaged Windows application
+        timeout-minutes: 5
         if: runner.os == 'Windows'
         run: npm run smoke:packaged
       - name: Exercise packaged Linux application
+        timeout-minutes: 5
         if: runner.os == 'Linux'
         env:
           PORTAL_TEST_NO_SANDBOX: '1'
         run: xvfb-run -a npm run smoke:packaged
       - name: Exercise AppImage without FUSE
+        timeout-minutes: 5
         if: runner.os == 'Linux'
         env:
           PORTAL_TEST_NO_SANDBOX: '1'

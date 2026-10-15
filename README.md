@@ -9,14 +9,14 @@ Download a Windows portable `.exe`, or extract the Windows ZIP and run **LitePar
 On Linux, download the `.AppImage`, mark it executable, and launch it as your normal user:
 
 ```sh
-chmod +x LiteParse-Portal-0.3.1-linux-x86_64.AppImage
-./LiteParse-Portal-0.3.1-linux-x86_64.AppImage
+chmod +x LiteParse-Portal-0.3.2-linux-x86_64.AppImage
+./LiteParse-Portal-0.3.2-linux-x86_64.AppImage
 ```
 
 The AppImage uses the pinned modern static runtime rather than the legacy FUSE 2 runtime. If FUSE mounting is unavailable, its built-in extraction mode runs without installing FUSE or using administrator permissions:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.3.1-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.3.2-linux-x86_64.AppImage
 ```
 
 Extraction mode unpacks to a temporary directory and cleans it up when the app closes. Project data stays beside the original AppImage in **LiteParse Portal Data**. You can alternatively extract the `.tar.gz` and launch `liteparse-portal`.
@@ -106,15 +106,15 @@ git add package.json package-lock.json src/renderer/index.html README.md VALIDAT
 git commit -m "Release next version"
 git push origin main
 # Replace the example with the exact version now in package.json:
-git tag v0.3.2
-git push origin v0.3.2
+git tag v0.3.3
+git push origin v0.3.3
 ```
 
 The tag must exactly match `v` plus the version in both package files. For an already prepared version, push only its matching tag. Keep the UI version label in `src/renderer/index.html` and any version-specific documentation current when preparing an application update.
 
 The workflow publishes only after both native platform builds pass the core tests and packaged smoke checks. The release contains the Windows portable EXE and ZIP, Linux AppImage and tar.gz, and `SHA256SUMS.txt`. It verifies filenames, file formats, checksums, and uploaded sizes before publishing the draft. Smoke screenshots stay in Actions artifacts. Prerelease versions such as `v0.4.0-rc.1` are marked as prereleases.
 
-Publishing uses the repository's built-in `GITHUB_TOKEN`, with write access only in the release job; no personal access token or extra secret is required. A failed upload leaves a draft that can be resumed with **Re-run failed jobs** in Actions. Published downloads are kept unchanged on reruns; publish a new version to replace them. To explicitly rebuild an existing tag, use `gh workflow run build.yml --ref v0.3.1` with the desired tag. Running the workflow against a branch builds artifacts without publishing.
+Publishing uses the repository's built-in `GITHUB_TOKEN`, with write access only in the release job; no personal access token or extra secret is required. A failed upload leaves a draft that can be resumed with **Re-run failed jobs** in Actions. Published downloads are kept unchanged on reruns; publish a new version to replace them. To explicitly rebuild an existing tag, use `gh workflow run build.yml --ref v0.3.2` with the desired tag. Running the workflow against a branch builds artifacts without publishing.
 
 ## Verification status
 
