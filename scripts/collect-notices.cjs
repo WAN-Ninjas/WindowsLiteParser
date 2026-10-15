@@ -2,6 +2,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const sources = [
+  ['AppImage-Runtime-LICENSE.txt', 'https://raw.githubusercontent.com/AppImage/type2-runtime/dd6cebe/LICENSE'],
   ['LiteParse-LICENSE.txt', 'https://raw.githubusercontent.com/run-llama/liteparse/main/LICENSE'],
   ['Tesseract-LICENSE.txt', 'https://raw.githubusercontent.com/tesseract-ocr/tesseract/5.5.1/LICENSE'],
   ['Leptonica-LICENSE.txt', 'https://raw.githubusercontent.com/DanBloomberg/leptonica/1.85.0/leptonica-license.txt'],

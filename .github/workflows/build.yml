@@ -37,6 +37,12 @@ jobs:
         env:
           PORTAL_TEST_NO_SANDBOX: '1'
         run: xvfb-run -a npm run smoke:packaged
+      - name: Exercise AppImage without FUSE
+        if: runner.os == 'Linux'
+        env:
+          PORTAL_TEST_NO_SANDBOX: '1'
+          PORTAL_TEST_APPIMAGE_EXTRACT: '1'
+        run: xvfb-run -a npm run smoke:appimage
       - uses: actions/upload-artifact@v4
         with:
           name: LiteParse-Portal-${{ runner.os }}
@@ -44,5 +50,6 @@ jobs:
             release/*.exe
             release/*.zip
             release/*.tar.gz
+            release/*.AppImage
             release/smoke-*.png
           if-no-files-found: error

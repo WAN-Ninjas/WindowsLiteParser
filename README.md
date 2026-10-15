@@ -1,12 +1,27 @@
 # LiteParse Portal
 
-A portable desktop application built around [LiteParse](https://github.com/run-llama/liteparse). Windows 11 x64 is the primary target. Linux x64 is supported as an extracted archive. A macOS build target is present for future validation.
+A portable desktop application built around [LiteParse](https://github.com/run-llama/liteparse). Windows 11 x64 is the primary target. Linux x64 is available as an AppImage and an extracted archive. A macOS build target is present for future validation.
 
 ## Using the application
 
 Download a Windows portable `.exe`, or extract the Windows ZIP and run **LiteParse Portal.exe**. No Node.js, Python, database server, LibreOffice, Tesseract installation, or administrator account is needed. The portable EXE expands bundled application files into a temporary directory at launch; project data stays beside the downloaded EXE. With a ZIP, keep the entire folder together.
 
-On Linux, extract the `.tar.gz` and launch `liteparse-portal`. This includes Electron, the parser, PDFium, SQLite, and the English OCR model. Linux still needs a compatible desktop distribution's glibc, GTK, NSS, graphics/audio libraries, and working Chromium sandbox support. It does not require FUSE. An archive cannot run on every Linux distribution independently of system libraries. Do not launch the application as root.
+On Linux, download the `.AppImage`, mark it executable, and launch it as your normal user:
+
+```sh
+chmod +x LiteParse-Portal-0.1.0-linux-x86_64.AppImage
+./LiteParse-Portal-0.1.0-linux-x86_64.AppImage
+```
+
+The AppImage uses the pinned modern static runtime rather than the legacy FUSE 2 runtime. If FUSE mounting is unavailable, its built-in extraction mode runs without installing FUSE or using administrator permissions:
+
+```sh
+APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.1.0-linux-x86_64.AppImage
+```
+
+Extraction mode unpacks to a temporary directory and cleans it up when the app closes. Project data stays beside the original AppImage in **LiteParse Portal Data**. You can alternatively extract the `.tar.gz` and launch `liteparse-portal`.
+
+Both formats include Electron, the parser, PDFium, SQLite, and the English OCR model. Linux still needs a compatible desktop distribution's glibc, GTK, NSS, graphics/audio libraries, and working Chromium sandbox support. The tar.gz does not require FUSE. Neither format runs on every Linux distribution independently of system libraries. Do not launch the application as root. See the [AppImage extraction-mode documentation](https://docs.appimage.org/user-guide/troubleshooting/fuse.html#extract-and-run-type-2-appimages).
 
 1. **Projects:** create a named project. Import one file, select multiple files, or import a folder recursively. Optionally choose a watched folder, including its subfolders. Folder polling runs every four seconds while the application is open and waits for two stable observations before importing a file.
 2. **Automatic fields:** the first document establishes CSV columns from labeled values and aligned label/value pairs. Later documents can add columns automatically. Existing rows are preserved, with blanks for fields they did not contain. Every completed document becomes one row. Repeated labeled values are joined with newlines in the same cell.
@@ -27,7 +42,7 @@ Limits in this version: 100 MiB per input, 2,000 pages per document, 50 MiB extr
 
 SQLite is embedded in the bundled desktop runtime through `node:sqlite`; there is no database service or external runtime. The data folder contains `portal.sqlite`, `sources/`, and `exports/`. SQLite uses disk-backed transactions, full synchronous commits, foreign-key checks, and content clearing on deletion. CSV writes use a temporary file followed by atomic replacement. Completed jobs, corrections, projects, schemas, and the queue persist across launches. Interrupted jobs return to the queue on restart. Duplicate file content is skipped within each project or quick conversion; the same file can belong to different projects.
 
-Packaged applications prefer a **LiteParse Portal Data** folder beside the executable (beside the original downloaded EXE for the Windows portable launcher). If no existing portable database is present and that location is not writable, the app uses the current user's application-data directory. The actual path is visible through **Open data folder**. An existing unreadable portable database causes an error instead of silently starting over. Development uses `.portal-data/`.
+Packaged applications prefer a **LiteParse Portal Data** folder beside the executable (beside the original download for the Windows portable EXE and Linux AppImage launchers). If no existing portable database is present and that location is not writable, the app uses the current user's application-data directory. The actual path is visible through **Open data folder**. An existing unreadable portable database causes an error instead of silently starting over. Development uses `.portal-data/`.
 
 For an explicit data location:
 
@@ -54,13 +69,14 @@ npm start
 
 ```sh
 npm run dist:win     # Windows portable EXE + ZIP (build on Windows)
-npm run dist:linux   # Linux tar.gz (build on Linux)
+npm run dist:linux   # Linux AppImage + tar.gz (build on Linux)
+npm run dist:appimage # Linux AppImage only
 npm run dist:mac     # future macOS ZIP target; not release-validated
 ```
 
 Windows release preparation also collects the Microsoft C++ runtime DLLs into the application folder. The native LiteParse Windows addon imports these DLLs; omitting them would incorrectly require users to install a redistributable. `scripts/prepare-windows-runtime.cjs` downloads a pinned Microsoft redistributable, verifies its SHA-256, and extracts the application-local x64 DLLs and license without running its installer. This is a build-time download only. The runtime DLLs ship beside the executable.
 
-`npm run pack` produces an unpacked application for the current platform. `npm run smoke:packaged` exercises the actual packaged app, including renderer IPC, native PDF parsing, field expansion, review, and image OCR. On headless Linux use `xvfb-run -a npm run smoke:packaged`. For a restricted CI container only, `PORTAL_TEST_NO_SANDBOX=1` disables Chromium's OS sandbox for this test run; distributed launchers do not disable it.
+`npm run pack` produces an unpacked application for the current platform. `npm run smoke:packaged` exercises the actual packaged app, including renderer IPC, native PDF parsing, field expansion, review, and image OCR. `npm run smoke:appimage` runs those checks through the actual AppImage launcher and verifies that the database lives beside it, including a download path containing spaces. Set `PORTAL_TEST_APPIMAGE_EXTRACT=1` to exercise extraction mode without FUSE. On headless Linux prefix these commands with `xvfb-run -a`. For a restricted CI container only, `PORTAL_TEST_NO_SANDBOX=1` disables Chromium's OS sandbox for this test run; distributed launchers do not disable it.
 
 The CI workflow builds Windows and Linux packages on their own operating systems, runs the tests and packaged smoke checks, and uploads artifacts. Windows-on-Linux builds are not a substitute for Windows validation. macOS packaging, signing, and notarization remain future work. Current local artifacts are unsigned; publisher signing is a release concern and does not change the normal-user runtime design.
 

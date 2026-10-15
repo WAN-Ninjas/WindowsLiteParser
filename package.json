@@ -19,11 +19,14 @@
     "prepack": "npm run prepare:assets && npm run check",
     "predist:win": "npm run prepare:assets && npm run check",
     "predist:linux": "npm run prepare:assets && npm run check",
+    "predist:appimage": "npm run prepare:assets && npm run check",
     "predist:mac": "npm run prepare:assets && npm run check",
     "dist:win": "electron-builder --win portable zip --x64",
-    "dist:linux": "electron-builder --linux tar.gz --x64",
+    "dist:linux": "electron-builder --linux AppImage tar.gz --x64",
+    "dist:appimage": "electron-builder --linux AppImage --x64",
     "dist:mac": "electron-builder --mac zip",
-    "smoke:packaged": "node scripts/smoke-packaged.cjs"
+    "smoke:packaged": "node scripts/smoke-packaged.cjs",
+    "smoke:appimage": "node scripts/smoke-packaged.cjs appimage"
   },
   "dependencies": {
     "@llamaindex/liteparse": "2.15.1",
@@ -68,6 +71,8 @@
       }
     ],
     "npmRebuild": false,
+    "toolsets": { "appimage": "1.0.3" },
+    "appImage": { "executableArgs": [] },
     "beforePack": "./scripts/before-pack.cjs",
     "extraResources": [
       {
@@ -104,6 +109,7 @@
     },
     "linux": {
       "target": [
+        "AppImage",
         "tar.gz"
       ],
       "category": "Office",

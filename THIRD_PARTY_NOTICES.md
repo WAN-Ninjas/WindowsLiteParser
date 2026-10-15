@@ -8,6 +8,7 @@ LiteParse Portal uses these open-source components. Preserve this file, the appl
 | SQLite (embedded in Node.js / Electron) | Public domain; https://sqlite.org/copyright.html; bundled runtime notices also cover the Node.js integration |
 | csv-parse | MIT; https://github.com/adaltas/node-csv |
 | Electron / Chromium / Node.js | MIT and bundled dependency notices; the distribution contains `LICENSE`, `LICENSES.chromium.html`, and Electron license resources |
+| AppImage type-2 runtime (Linux AppImage only) | MIT and linked-library notices; https://github.com/AppImage/type2-runtime/blob/dd6cebe/LICENSE; license included in `resources/notices/AppImage-Runtime-LICENSE.txt` |
 | PDFium | BSD-style notices and third-party licenses; https://pdfium.googlesource.com/pdfium/+/refs/heads/main/LICENSE and https://github.com/bblanchon/pdfium-binaries |
 | Tesseract / Leptonica (linked by LiteParse) | Apache-2.0 / BSD-style; https://github.com/tesseract-ocr/tesseract and https://github.com/DanBloomberg/leptonica |
 | English Tesseract model (`tessdata_best`) | Apache-2.0; pinned source https://github.com/tesseract-ocr/tessdata_best/tree/e12c65a915945e4c28e237a9b52bc4a8f39a0cec |

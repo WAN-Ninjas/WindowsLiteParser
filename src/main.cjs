@@ -20,7 +20,9 @@ app.setAppUserModelId('local.liteparse.portal');
 async function dataDirectory() {
   if (explicitData) return path.resolve(explicitData);
   if (!app.isPackaged) return path.join(app.getAppPath(), '.portal-data');
-  const base = process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
+  const appImageDirectory = process.platform === 'linux' && process.env.APPIMAGE
+    ? path.dirname(path.resolve(process.env.APPIMAGE)) : null;
+  const base = appImageDirectory || process.env.PORTABLE_EXECUTABLE_DIR || path.dirname(app.getPath('exe'));
   const portable = path.join(base, 'LiteParse Portal Data');
   try {
     await fs.mkdir(portable, { recursive: true });
