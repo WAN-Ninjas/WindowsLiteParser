@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>LiteParse Portal</title>
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="app.js"></script>
+</head>
+<body>
+  <aside class="sidebar">
+    <a class="brand" href="#"><span class="brand-icon">L<span>↗</span></span><span>LiteParse <b>PORTAL</b></span></a>
+    <div class="workspace-label">YOUR WORKSPACE</div>
+    <button class="nav-item active" id="nav-projects"><span>▦</span> Projects <span class="count" id="project-count">0</span></button>
+    <button class="nav-item" id="nav-quick"><span>ϟ</span> Quick conversions <span class="count" id="quick-count">0</span></button>
+    <div class="sidebar-description" id="sidebar-description">Keep adding documents.<br>One project. One growing CSV.</div>
+    <div class="sidebar-collections" id="sidebar-collections"></div>
+    <div class="sidebar-footer">
+      <div class="local-badge"><span class="status-dot"></span> Runs on your computer</div>
+      <p>No account. No uploads.<br>Your documents stay here.</p>
+      <button class="text-button" id="open-data">Open data folder ↗</button>
+      <span class="version">LiteParse Portal · v0.1.0</span>
+    </div>
+  </aside>
+  <main>
+    <header class="topbar"><span id="breadcrumb">Workspace <span>/</span> Projects</span><div class="queue-status"><span class="status-dot"></span><span id="queue-status">Ready to convert</span><button id="pause-button" class="small-button">Pause</button></div></header>
+    <section class="page-heading"><div><div class="eyebrow">DOCUMENTS → STRUCTURED DATA</div><h1 id="page-title">Your projects</h1><p id="page-description">A home for documents that keep coming. Import, review, and grow your CSV.</p></div><button class="primary" id="new-button">＋ New project</button></section>
+    <div id="fatal-banner" class="alert error" hidden></div>
+    <section class="stats"><div><span class="stat-icon purple">▤</span><div><b id="stat-documents">0</b><span>Documents imported</span></div></div><div><span class="stat-icon green">✓</span><div><b id="stat-completed">0</b><span>Documents converted</span></div></div><div><span class="stat-icon amber">◷</span><div><b id="stat-review">0</b><span>Waiting for review</span></div></div></section>
+    <section id="collection-list"></section>
+    <section class="empty-state" id="empty-state"><div class="empty-art">▤<span>＋</span></div><h2 id="empty-title">Make room for your first project</h2><p id="empty-description">Give it a name and add your first document.<br>Fields are discovered automatically. Your CSV grows as new fields arrive.</p><button class="primary" id="empty-new">＋ Create a project</button><div class="supported">PDF · PNG · JPEG · TIFF · BMP · WebP</div></section>
+    <section id="detail" hidden>
+      <div class="section-header"><button class="text-button" id="back-button">← All projects</button><span class="tag">LOCAL PROJECT</span></div>
+      <div class="detail-heading"><div><h2 id="detail-name"></h2><p id="detail-description">Each document becomes one row. Review extracted fields before using them.</p></div><div class="actions"><button id="import-folder" class="secondary">Import folder</button><button id="import-files" class="primary">＋ Add files</button></div></div>
+      <div class="project-settings"><div><span class="setting-icon">↻</span><div><b>Watched folder</b><span id="watch-path">Add files automatically while Portal is open</span></div></div><div class="actions"><button class="text-button" id="stop-watch" hidden>Stop watching</button><button class="secondary" id="watch-button">Choose folder</button></div></div>
+      <div class="project-settings"><div><span class="setting-icon">↗</span><div><b>Output CSV</b><span id="output-path"></span></div></div><div class="actions"><button class="text-button" id="reveal-csv">Show file</button><button class="secondary" id="export-button">Save CSV as…</button></div></div>
+      <div class="project-settings retention-settings"><div><span class="setting-icon">▤</span><div><b>Local database retention</b><span>Removing content keeps the CSV and duplicate-detection metadata. It cannot be restored from Portal.</span></div></div><select id="retention-select" aria-label="Local database retention"><option value="keep">Keep document content long term</option><option value="remove">Remove content after review & CSV export</option></select></div>
+      <div id="project-alert" class="alert" hidden></div>
+      <div class="document-toolbar"><h3>Documents <span id="document-count" class="count"></span></h3><label>Show <select id="status-filter"><option value="all">All documents</option><option value="needs_review">Needs review</option><option value="completed">Converted</option><option value="failed">Failed</option><option value="queued">Queued</option></select></label></div>
+      <div class="table-wrap"><table><thead><tr><th>Document</th><th>Fields extracted</th><th>Status</th><th>Added</th><th></th></tr></thead><tbody id="documents"></tbody></table><div id="no-documents" class="table-empty" hidden>No documents yet. Add a file or import a folder to get started.</div></div>
+      <div class="pagination"><span id="document-range"></span><div class="actions"><button class="secondary" id="previous-page">← Previous</button><button class="secondary" id="next-page">Next →</button></div></div>
+      <p class="footnote" id="document-limit">Duplicates are skipped by file content within this project. Originals are kept safely in your data folder.</p>
+    </section>
+    <footer class="page-footer"><span>Built with LiteParse · English OCR included</span><span>Local storage <span class="status-dot"></span> SQLite</span></footer>
+  </main>
+  <dialog id="create-dialog">
+    <form id="create-form"><div class="dialog-heading"><div><div class="eyebrow">SET UP YOUR CONVERSION</div><h2 id="create-title">New project</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div>
+      <label class="field-label">Name<input id="collection-name" maxlength="100" placeholder="e.g. Supplier invoices" required autocomplete="off"></label>
+      <div class="template-info"><span>✧</span><div><b>Your documents define the fields</b><p>The first document establishes the columns. New labels found in later documents add columns automatically, preserving earlier rows. One document becomes one CSV row.</p></div></div>
+      <label class="field-label">Local database retention<select id="create-retention"><option value="keep">Keep document content long term</option><option value="remove">Remove content after review & CSV export</option></select></label>
+      <p class="footnote">All documents are staged in SQLite for review first. Removing content deletes imported copies, source text, and extracted values after review and a successful export. The CSV and minimal duplicate-detection metadata remain.</p>
+      <div class="field-section-heading"><h3>Optional extra fields</h3><button type="button" id="add-field" class="text-button">＋ Add field</button></div>
+      <div id="schema-fields"></div>
+      <p class="footnote">You can leave this empty. Automatic discovery finds labeled values and aligned pairs locally. Review the results and add any missed fields.</p>
+      <div id="create-error" class="alert error" hidden></div>
+      <div class="dialog-footer"><button type="button" class="secondary close-dialog">Cancel</button><button type="submit" class="primary" id="create-submit">Create project</button></div>
+    </form>
+  </dialog>
+  <dialog id="review-dialog" class="review-dialog">
+    <form id="review-form"><div class="dialog-heading"><div><div class="eyebrow">REVIEW EXTRACTED FIELDS</div><h2 id="review-title"></h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div>
+      <div class="review-layout"><section><div class="review-note">Compare each value with the source text. Add any missed labels; they become columns throughout this project.</div><div id="review-fields"></div><div id="additional-fields"></div><button type="button" class="text-button" id="review-add-field">＋ Add a missed field</button></section><section class="source-panel"><h3>Extracted source text</h3><pre id="source-text"></pre><p id="text-truncated" hidden>Preview limited to 200,000 characters.</p></section></div>
+      <div id="review-error" class="alert error" hidden></div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Close</button><button class="primary" type="submit">Save & mark reviewed</button></div>
+    </form>
+  </dialog>
+  <div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

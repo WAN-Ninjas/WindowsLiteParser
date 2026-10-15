@@ -1,0 +1,48 @@
+name: Portable desktop builds
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node node_modules/electron/install.js
+      - run: npm run prepare:assets
+      - run: npm run check
+      - run: npm test
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: npm run dist:win
+      - name: Package Linux
+        if: runner.os == 'Linux'
+        run: npm run dist:linux
+      - name: Exercise packaged Windows application
+        if: runner.os == 'Windows'
+        run: npm run smoke:packaged
+      - name: Exercise packaged Linux application
+        if: runner.os == 'Linux'
+        env:
+          PORTAL_TEST_NO_SANDBOX: '1'
+        run: xvfb-run -a npm run smoke:packaged
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LiteParse-Portal-${{ runner.os }}
+          path: |
+            release/*.exe
+            release/*.zip
+            release/*.tar.gz
+            release/smoke-*.png
+          if-no-files-found: error

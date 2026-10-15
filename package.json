@@ -1,0 +1,119 @@
+{
+  "name": "liteparse-portal",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portable, offline document conversion with persistent projects and CSV exports",
+  "author": "LiteParse Portal contributors",
+  "license": "Apache-2.0",
+  "main": "src/main.cjs",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "prepare:assets": "node scripts/prepare-assets.cjs",
+    "prestart": "npm run prepare:assets",
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "check": "node scripts/check.cjs",
+    "pack": "electron-builder --dir",
+    "prepack": "npm run prepare:assets && npm run check",
+    "predist:win": "npm run prepare:assets && npm run check",
+    "predist:linux": "npm run prepare:assets && npm run check",
+    "predist:mac": "npm run prepare:assets && npm run check",
+    "dist:win": "electron-builder --win portable zip --x64",
+    "dist:linux": "electron-builder --linux tar.gz --x64",
+    "dist:mac": "electron-builder --mac zip",
+    "smoke:packaged": "node scripts/smoke-packaged.cjs"
+  },
+  "dependencies": {
+    "@llamaindex/liteparse": "2.15.1",
+    "csv-parse": "7.0.3"
+  },
+  "devDependencies": {
+    "7zip-bin": "5.2.0",
+    "electron": "44.7.2",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "local.liteparse.portal",
+    "productName": "LiteParse Portal",
+    "artifactName": "LiteParse-Portal-${version}-${os}-${arch}.${ext}",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "src/**/*",
+      "package.json",
+      "README.md",
+      "LICENSE",
+      "THIRD_PARTY_NOTICES.md"
+    ],
+    "asar": true,
+    "extraFiles": [
+      {
+        "from": "README.md",
+        "to": "README.md"
+      },
+      {
+        "from": "VALIDATION.md",
+        "to": "VALIDATION.md"
+      },
+      {
+        "from": "THIRD_PARTY_NOTICES.md",
+        "to": "THIRD_PARTY_NOTICES.md"
+      },
+      {
+        "from": "LICENSE",
+        "to": "PORTAL-LICENSE.txt"
+      }
+    ],
+    "npmRebuild": false,
+    "beforePack": "./scripts/before-pack.cjs",
+    "extraResources": [
+      {
+        "from": "assets/notices",
+        "to": "notices"
+      },
+      {
+        "from": "assets/tessdata",
+        "to": "tessdata",
+        "filter": [
+          "eng.traineddata"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "node_modules/@llamaindex/**/*"
+    ],
+    "win": {
+      "extraFiles": [
+        {
+          "from": "assets/windows-runtime",
+          "to": "."
+        }
+      ],
+      "target": [
+        "portable",
+        "zip"
+      ],
+      "requestedExecutionLevel": "asInvoker",
+      "signAndEditExecutable": false
+    },
+    "portable": {
+      "requestExecutionLevel": "user"
+    },
+    "linux": {
+      "target": [
+        "tar.gz"
+      ],
+      "category": "Office",
+      "executableName": "liteparse-portal"
+    },
+    "mac": {
+      "target": [
+        "zip"
+      ],
+      "category": "public.app-category.productivity"
+    }
+  }
+}

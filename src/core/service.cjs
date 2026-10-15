@@ -1,0 +1,279 @@
+'use strict';
+
+const fs = require('node:fs/promises');
+const path = require('node:path');
+const { randomUUID } = require('node:crypto');
+const { EventEmitter } = require('node:events');
+const { DEFAULT_FIELDS, validateFields, mergeFields, fieldName } = require('./extraction.cjs');
+const { walk, stageFile, supported, inside } = require('./files.cjs');
+const { exportCsv } = require('./csv.cjs');
+
+class PortalService extends EventEmitter {
+  constructor(store, directory, parser) {
+    super();
+    this.store = store; this.directory = directory; this.parser = parser;
+    this.running = false; this.stopping = false; this.paused = false;
+    this.imports = Promise.resolve(); this.exports = Promise.resolve();
+    this.seen = new Map(); this.polling = false; this.fatalError = '';
+  }
+  async start() {
+    await fs.mkdir(path.join(this.directory, 'sources'), { recursive: true });
+    await fs.mkdir(path.join(this.directory, 'exports'), { recursive: true });
+    // Remove interrupted staging files, keeping every database-owned source.
+    const owned = new Set(this.store.all('SELECT staged_path FROM documents').map(row => path.basename(row.staged_path)));
+    for (const name of await fs.readdir(path.join(this.directory, 'sources'))) {
+      if (!owned.has(name)) await fs.rm(path.join(this.directory, 'sources', name), { force: true });
+    }
+    await this.refreshExports();
+    this.timer = setInterval(() => this.poll().catch(error => this.fail(error)), 4000);
+    this.pump();
+    this.poll().catch(error => this.fail(error));
+  }
+  fail(error) { this.fatalError = error.message || String(error); this.paused = true; this.emit('change'); }
+  guard() { if (this.stopping) throw new Error('Portal is closing.'); if (this.fatalError) throw new Error(this.fatalError); }
+  collection(id) {
+    const row = this.store.get('SELECT * FROM collections WHERE id = ?', [String(id)]);
+    if (!row) throw new Error('Project or conversion not found.');
+    return row;
+  }
+  async createCollection({ kind = 'project', name, fields = DEFAULT_FIELDS, watchPath = '', retainContent = true }) {
+    this.guard();
+    if (!['project', 'quick'].includes(kind)) throw new Error('Invalid conversion type.');
+    name = String(name || '').trim();
+    if (!name || name.length > 100) throw new Error('Enter a name of at most 100 characters.');
+    fields = validateFields(fields);
+    if (watchPath) {
+      watchPath = path.resolve(watchPath);
+      if (inside(watchPath, this.directory) || inside(this.directory, watchPath)) throw new Error('Choose a watched folder separate from the Portal data folder.');
+      if (!(await fs.stat(watchPath)).isDirectory()) throw new Error('The watched path must be a folder.');
+    }
+    const id = randomUUID();
+    const output = path.join(this.directory, 'exports', `${id}.csv`);
+    await this.store.transaction(() => this.store.run(
+      'INSERT INTO collections(id, kind, name, fields, watch_path, output_path, created_at, retain_content) VALUES(?,?,?,?,?,?,?,?)',
+      [id, kind, name, JSON.stringify(fields), watchPath, output, new Date().toISOString(), retainContent ? 1 : 0]));
+    await this.updateExport(id);
+    this.emit('change');
+    return id;
+  }
+  snapshot(id, options = {}) {
+    const collections = this.store.all(`SELECT c.*, COUNT(d.id) AS total,
+      SUM(CASE WHEN d.status = 'completed' THEN 1 ELSE 0 END) AS completed,
+      SUM(CASE WHEN d.status = 'failed' THEN 1 ELSE 0 END) AS failed,
+      SUM(CASE WHEN d.status = 'completed' AND d.reviewed = 0 AND d.purged = 0 THEN 1 ELSE 0 END) AS needs_review
+      FROM collections c LEFT JOIN documents d ON c.id = d.collection_id GROUP BY c.id ORDER BY c.created_at DESC`)
+      .map(row => ({ ...row, fields: JSON.parse(row.fields) }));
+    const predicates = { all: '', needs_review: " AND status = 'completed' AND reviewed = 0 AND purged = 0", completed: " AND status = 'completed'", failed: " AND status = 'failed'", queued: " AND status IN ('queued','processing')" };
+    const predicate = predicates[options.filter] ?? '';
+    const documentTotal = id ? this.store.get(`SELECT COUNT(*) AS count FROM documents WHERE collection_id = ?${predicate}`, [String(id)]).count : 0;
+    const page = Math.min(Math.max(0, Math.floor(Number(options.page) || 0)), Math.max(0, Math.ceil(documentTotal / 100) - 1));
+    const documents = id ? this.store.all(`SELECT id, name, status, error, page_count, bytes, values_json, missing_json, reviewed, created_at, purged
+      FROM documents WHERE collection_id = ?${predicate} ORDER BY sequence DESC LIMIT 100 OFFSET ?`, [String(id), page * 100])
+      .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json) })) : [];
+    const counts = this.store.all('SELECT status, COUNT(*) AS count FROM documents GROUP BY status');
+    return { collections, documents, counts, page, documentTotal, pageSize: 100, paused: this.paused, fatalError: this.fatalError, dataDirectory: this.directory, defaultFields: DEFAULT_FIELDS };
+  }
+  importPaths(id, inputs) {
+    const operation = this.imports.then(() => this._importPaths(id, inputs));
+    this.imports = operation.catch(() => {});
+    return operation;
+  }
+  async _importPaths(id, inputs) {
+    this.guard(); this.collection(id);
+    const report = { added: 0, duplicates: 0, errors: [], unsupported: 0 };
+    for (const input of inputs) {
+      try {
+        const stat = await fs.lstat(input);
+        if (stat.isFile() && !supported(input)) { report.unsupported++; continue; }
+        for await (const file of walk(input, this.directory)) {
+          if (this.stopping) break;
+          const docId = randomUUID();
+          const staged = path.join(this.directory, 'sources', `${docId}${path.extname(file.path).toLowerCase()}`);
+          let owned = false;
+          try {
+            const { hash, bytes } = await stageFile(file.path, staged);
+            if (this.store.get('SELECT id FROM documents WHERE collection_id = ? AND sha256 = ?', [id, hash])) { report.duplicates++; continue; }
+            await this.store.transaction(() => this.store.run(`INSERT INTO documents
+              (id, collection_id, name, source_path, staged_path, sha256, bytes, status, created_at) VALUES(?,?,?,?,?,?,?,'queued',?)`,
+            [docId, id, path.basename(file.path), file.path, staged, hash, bytes, new Date().toISOString()]));
+            owned = true; report.added++;
+            this.emit('change'); this.pump();
+          } catch (error) {
+            // A disk write error must not leave the in-memory DB pointing at a deleted source.
+            owned = Boolean(this.store.get('SELECT id FROM documents WHERE id = ?', [docId]));
+            if (owned) this.fail(error);
+            report.errors.push(`${path.basename(file.path)}: ${error.message}`);
+          } finally { if (!owned) await fs.rm(staged, { force: true }); }
+          if (this.fatalError) break;
+        }
+      } catch (error) { report.errors.push(`${path.basename(input)}: ${error.message}`); }
+      if (this.fatalError) break;
+    }
+    return report;
+  }
+  async pump() {
+    if (this.running || this.stopping || this.paused) return;
+    this.running = true;
+    this.pumping = (async () => {
+      while (!this.stopping && !this.paused) {
+        const doc = this.store.get("SELECT * FROM documents WHERE status = 'queued' ORDER BY sequence LIMIT 1");
+        if (!doc) break;
+        await this.store.transaction(() => this.store.run("UPDATE documents SET status = 'processing', error = '' WHERE id = ?", [doc.id]));
+        this.emit('change');
+        let parsed;
+        try { parsed = await this.parser.parse(doc.staged_path, JSON.parse(this.collection(doc.collection_id).fields)); }
+        catch (error) {
+          await this.store.transaction(() => this.store.run('UPDATE documents SET status = ?, error = ? WHERE id = ?',
+            [this.stopping ? 'queued' : 'failed', this.stopping ? '' : error.message.slice(0, 4000), doc.id]));
+          this.emit('change'); continue;
+        }
+        // This persistence error is fatal; do not mislabel a successful parse as a bad document.
+        await this.store.transaction(() => {
+          const fields = mergeFields(JSON.parse(this.collection(doc.collection_id).fields), parsed.discovered || []);
+          this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), doc.collection_id]);
+          this.store.run('DELETE FROM pages WHERE document_id = ?', [doc.id]);
+          for (const page of parsed.pages) this.store.run('INSERT INTO pages(document_id, number, text) VALUES(?,?,?)', [doc.id, page.number, page.text]);
+          this.store.run("UPDATE documents SET status = 'completed', page_count = ?, values_json = ?, missing_json = ?, reviewed = 0, error = '' WHERE id = ?",
+            [parsed.pages.length, JSON.stringify(parsed.values), JSON.stringify(parsed.missing), doc.id]);
+        });
+        await this.updateExport(doc.collection_id);
+        this.emit('change');
+      }
+    })().catch(error => this.fail(error)).finally(() => { this.running = false; });
+    await this.pumping;
+  }
+  async retry(id) {
+    this.guard();
+    const doc = this.store.get("SELECT * FROM documents WHERE id = ? AND status = 'failed'", [String(id)]);
+    if (!doc) throw new Error('Only failed documents can be retried.');
+    await this.store.transaction(() => this.store.run("UPDATE documents SET status = 'queued', error = '' WHERE id = ?", [doc.id]));
+    this.emit('change'); this.pump();
+  }
+  document(id) {
+    const row = this.store.get("SELECT * FROM documents WHERE id = ? AND status = 'completed'", [String(id)]);
+    if (!row) throw new Error('The document has not finished processing.');
+    if (row.purged) throw new Error('Local document content was removed by your retention setting. This record is retained in the project CSV.');
+    const collection = this.collection(row.collection_id);
+    const pages = this.store.all('SELECT number, text FROM pages WHERE document_id = ? ORDER BY number', [row.id]);
+    let remaining = 200000;
+    return { id: row.id, name: row.name, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json),
+      fields: JSON.parse(collection.fields), reviewed: Boolean(row.reviewed),
+      text: pages.map(page => { const text = `--- Page ${page.number} ---\n${page.text}\n`; const part = text.slice(0, Math.max(0, remaining)); remaining -= text.length; return part; }).join('\n'),
+      truncated: remaining < 0 };
+  }
+  async review(id, values, additional = []) {
+    this.guard();
+    const doc = this.document(id);
+    const row = this.store.get('SELECT collection_id FROM documents WHERE id = ?', [doc.id]);
+    const newFields = additional.map(field => ({ name: fieldName(String(field.label).slice(0, 80)), label: String(field.label).slice(0, 80), value: String(field.value).slice(0, 10000) }));
+    const fields = mergeFields(doc.fields, newFields);
+    const clean = {};
+    for (const field of fields) {
+      const value = newFields.find(item => item.name === field.name)?.value ?? values?.[field.name] ?? '';
+      if (typeof value !== 'string' || value.length > 10000) throw new Error('Each field value must be text of at most 10,000 characters.');
+      clean[field.name] = value.trim();
+    }
+    const missing = fields.filter(field => field.required && !clean[field.name]).map(field => field.name);
+    if (missing.length) throw new Error(`Fill the required fields before marking reviewed: ${missing.join(', ')}`);
+    await this.store.transaction(() => {
+      this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), row.collection_id]);
+      this.store.run('UPDATE documents SET values_json = ?, missing_json = ?, reviewed = 1 WHERE id = ?', [JSON.stringify(clean), JSON.stringify(missing), doc.id]);
+    });
+    await this.updateExport(row.collection_id);
+    this.emit('change');
+  }
+  async updateExport(id, destination) {
+    const task = this.exports.then(async () => {
+      const collection = this.collection(id);
+      let exported;
+      if (destination) {
+        // Never allow choosing the SQLite DB, an imported source, or a non-CSV file.
+        if (path.extname(destination).toLowerCase() !== '.csv' || inside(destination, path.join(this.directory, 'sources'))) throw new Error('Choose a CSV output file outside the source storage folder.');
+        exported = await exportCsv(this.store, collection, destination);
+        await this.store.transaction(() => this.store.run("UPDATE collections SET output_path = ?, export_error = '' WHERE id = ?", [destination, id]));
+      } else {
+        let exportError = '';
+        try { exported = await exportCsv(this.store, collection); }
+        catch (error) { exportError = `CSV could not be updated: ${error.message}. Close it in Excel or choose another location.`; }
+        if (exportError !== collection.export_error) await this.store.transaction(() => this.store.run('UPDATE collections SET export_error = ? WHERE id = ?', [exportError, id]));
+      }
+      if (exported && !collection.retain_content) await this.purgeExported(exported);
+      this.emit('change');
+    });
+    this.exports = task.catch(() => {});
+    return task;
+  }
+  async refreshExports() { for (const row of this.store.all('SELECT id FROM collections')) await this.updateExport(row.id); }
+  async purgeExported(exported) {
+    for (const row of exported.filter(doc => doc.reviewed && !doc.purged)) {
+      const current = this.store.get('SELECT * FROM documents WHERE id = ?', [row.id]);
+      if (!current || current.purged || current.values_json !== row.values_json || !current.reviewed) continue;
+      try { await fs.rm(current.staged_path, { force: true }); }
+      catch (error) {
+        await this.store.transaction(() => this.store.run('UPDATE collections SET export_error = ? WHERE id = ?', [`CSV saved, but local source cleanup failed: ${error.message}`, row.collection_id]));
+        continue;
+      }
+      await this.store.transaction(() => {
+        const latest = this.store.get('SELECT values_json, reviewed, purged FROM documents WHERE id = ?', [row.id]);
+        if (latest.purged || !latest.reviewed || latest.values_json !== row.values_json) return;
+        this.store.run('DELETE FROM pages WHERE document_id = ?', [row.id]);
+        this.store.run("UPDATE documents SET purged = 1, values_json = '{}', missing_json = '[]', name = 'Exported document', source_path = '', staged_path = '' WHERE id = ?", [row.id]);
+      });
+    }
+  }
+  async setRetention(id, retainContent) {
+    this.guard(); this.collection(id);
+    await this.store.transaction(() => this.store.run('UPDATE collections SET retain_content = ? WHERE id = ?', [retainContent ? 1 : 0, id]));
+    await this.updateExport(id); this.emit('change');
+  }
+  async setWatch(id, watchPath) {
+    this.guard(); const collection = this.collection(id);
+    if (collection.kind !== 'project') throw new Error('Quick conversions do not watch folders.');
+    if (watchPath && (inside(watchPath, this.directory) || inside(this.directory, watchPath))) throw new Error('Choose a watched folder separate from the data folder.');
+    if (watchPath && !(await fs.stat(watchPath)).isDirectory()) throw new Error('Choose an existing folder.');
+    await this.store.transaction(() => this.store.run("UPDATE collections SET watch_path = ?, watch_error = '' WHERE id = ?", [watchPath, id]));
+    this.seen.delete(id); this.emit('change');
+  }
+  async poll() {
+    if (this.polling || this.stopping || this.paused) return;
+    this.polling = true;
+    try {
+      for (const collection of this.store.all("SELECT * FROM collections WHERE kind = 'project' AND watch_path <> ''")) {
+        if (this.stopping || this.paused) break;
+        let errorMessage = '';
+        const previous = this.seen.get(collection.id) || new Map();
+        const next = new Map();
+        try {
+          for await (const file of walk(collection.watch_path, this.directory)) {
+            if (this.stopping) break;
+            const signature = `${file.size}:${file.mtimeMs}`;
+            const prior = previous.get(file.path);
+            let imported = prior?.signature === signature && prior.imported;
+            if (!imported && prior?.signature === signature) {
+              const report = await this.importPaths(collection.id, [file.path]);
+              imported = report.added > 0 || report.duplicates > 0;
+              if (report.errors.length) errorMessage = report.errors.slice(0, 3).join('\n');
+            }
+            next.set(file.path, { signature, imported });
+          }
+          this.seen.set(collection.id, next);
+        } catch (error) { errorMessage = `Watched folder: ${error.message}`; }
+        if (errorMessage !== collection.watch_error) {
+          await this.store.transaction(() => this.store.run('UPDATE collections SET watch_error = ? WHERE id = ?', [errorMessage, collection.id]));
+          this.emit('change');
+        }
+      }
+      for (const collection of this.store.all("SELECT id FROM collections WHERE export_error <> ''")) await this.updateExport(collection.id);
+    } finally { this.polling = false; }
+  }
+  togglePause() { this.guard(); this.paused = !this.paused; this.emit('change'); if (!this.paused) this.pump(); return this.paused; }
+  async stop() {
+    this.stopping = true; clearInterval(this.timer); this.parser.stop();
+    await this.imports; await this.pumping; await this.exports;
+    // poll() can be awaiting an import or an export; let it observe stopping before closing SQLite.
+    while (this.polling) await new Promise(resolve => setTimeout(resolve, 10));
+    await this.store.close();
+  }
+}
+
+module.exports = { PortalService };

@@ -1,0 +1,8 @@
+node_modules/
+release/
+.portal-data/
+*.log
+coverage/
+assets/tessdata/*.traineddata
+assets/windows-runtime/
+assets/notices/
