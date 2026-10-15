@@ -2,6 +2,32 @@
 
 A portable desktop application built around [LiteParse](https://github.com/run-llama/liteparse). Windows 11 x64 is the primary target. Linux x64 is available as an AppImage and an extracted archive. A macOS build target is present for future validation.
 
+[Download the latest Windows executable or Linux AppImage](https://github.com/WAN-Ninjas/WindowsLiteParser/releases/latest).
+
+## A quick tour
+
+These screenshots show the running desktop app on Linux with synthetic sample documents. Windows uses the same application interface. Use the top-right **Dark mode / Light mode** button to switch appearance.
+
+**1. Organize ongoing work into projects.** Each project keeps its own documents, discovered fields, review queue, and growing CSV. The workspace shows how many documents still need attention.
+
+![Dark-mode projects workspace with Supplier invoices, Purchase orders, Expense receipts, and conversion statistics](docs/screenshots/01-projects-dark.png)
+
+**2. Add files over time or watch an inbox.** Import individual files, multiple files, or a folder. While Portal is open, a watched folder adds new documents automatically. Choose an output CSV, analysis quality, and local database retention for each project. New fields expand the CSV without discarding earlier rows.
+
+![Light-mode Supplier invoices project showing its watched inbox, CSV output, retention and high-accuracy settings, and three imported invoices](docs/screenshots/02-project-light.png)
+
+**3. Run a quick conversion for one file or a batch.** Quick conversions use the same local extraction, review, and CSV workflow. They keep a separate conversion history and do not require setting up a watched folder.
+
+![Quick conversion containing a batch of two PDFs with extracted-field counts and Review and Reanalyze actions](docs/screenshots/03-quick-conversion-dark.png)
+
+**4. Check fields against the source.** Review extracted values beside the document text. Correct values directly, flag a missed or incorrect field, save an unfinished draft, or reanalyze with your selected quality. Saved corrections survive reanalysis.
+
+![Invoice review showing high-accuracy analysis, extracted fields, field-level teaching and flagging controls, and source text](docs/screenshots/04-review-dark.png)
+
+**5. Teach a missing field with an example.** Highlight source text and choose **Use selected text as example**, or type an example. Give the field a name and optionally verify a source label to reuse within this project or conversion. **Save field & draft** adds the CSV column and saves the correction; mark the document reviewed when you have finished checking it.
+
+![Missing-field helper defining Payment policy from an example, checking the Terms and Conditions source label, and enabling reuse on later documents](docs/screenshots/05-teach-missing-field-dark.png)
+
 ## Using the application
 
 Download a Windows portable `.exe`, or extract the Windows ZIP and run **LiteParse Portal.exe**. No Node.js, Python, database server, LibreOffice, Tesseract installation, or administrator account is needed. The portable EXE expands bundled application files into a temporary directory at launch; project data stays beside the downloaded EXE. With a ZIP, keep the entire folder together.
@@ -92,6 +118,8 @@ npm run dist:mac     # future macOS ZIP target; not release-validated
 Windows release preparation also collects the Microsoft C++ runtime DLLs into the application folder. The native LiteParse Windows addon imports these DLLs; omitting them would incorrectly require users to install a redistributable. `scripts/prepare-windows-runtime.cjs` downloads a pinned Microsoft redistributable, verifies its SHA-256, and extracts the application-local x64 DLLs and license without running its installer. This is a build-time download only. The runtime DLLs ship beside the executable.
 
 `npm run pack` produces an unpacked application for the current platform. `npm run smoke:packaged` exercises the actual packaged app, including renderer IPC, native PDF parsing, field expansion, review, and image OCR. `npm run smoke:appimage` runs those checks through the actual AppImage launcher and verifies that the database lives beside it, including a download path containing spaces. Set `PORTAL_TEST_APPIMAGE_EXTRACT=1` to exercise extraction mode without FUSE. On headless Linux prefix these commands with `xvfb-run -a`. For a restricted CI container only, `PORTAL_TEST_NO_SANDBOX=1` disables Chromium's OS sandbox for this test run; distributed launchers do not disable it.
+
+To regenerate the walkthrough screenshots after preparing assets, run `npx electron scripts/screenshots.cjs`. The developer harness opens the real app with a temporary database, generates synthetic PDFs, exercises manual and watched-folder imports, and saves PNGs in `docs/screenshots/`. It leaves existing workspaces untouched. On headless Linux use `xvfb-run -a -s '-screen 0 1600x1600x24' npx electron scripts/screenshots.cjs`; a restricted CI container may additionally need `--no-sandbox` for this capture run.
 
 The CI workflow builds Windows and Linux packages on their own operating systems, runs the tests and packaged smoke checks, and uploads artifacts. Windows-on-Linux builds are not a substitute for Windows validation. macOS packaging, signing, and notarization remain future work. Builds are currently unsigned; publisher signing is separate from release publication and does not change the normal-user runtime design.
 
