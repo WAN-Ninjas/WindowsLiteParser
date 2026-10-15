@@ -1,6 +1,7 @@
 'use strict';
 
 const DEFAULT_FIELDS = [];
+const { validateHint } = require('./teaching.cjs');
 
 const META_COLUMNS = ['document_id', 'source_file', 'sha256', 'page_count', 'imported_at', 'review_status'];
 
@@ -14,7 +15,7 @@ function validateFields(fields) {
     names.add(field.name);
     if (typeof field.pattern !== 'string' || field.pattern.length > 2000) throw new Error('Each field needs a pattern of at most 2,000 characters.');
     try { new RegExp(field.pattern, 'im'); } catch (error) { throw new Error(`Invalid pattern for ${field.name}: ${error.message}`); }
-    return { name: field.name, label: String(field.label || field.name).slice(0, 100), pattern: field.pattern, required: Boolean(field.required) };
+    return { name: field.name, label: String(field.label || field.name).slice(0, 100), pattern: field.pattern, required: Boolean(field.required), ...(field.hint ? { hint: validateHint(field.hint) } : {}) };
   });
 }
 

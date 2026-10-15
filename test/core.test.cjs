@@ -14,6 +14,7 @@ const { discoverFields, mergeFields, extractFields, validateFields, fieldName } 
 const { cell, csvFor } = require('../src/core/csv.cjs');
 const { stageFile, walk } = require('../src/core/files.cjs');
 const { pdfFixture } = require('../src/pdf-fixture.cjs');
+const { analyzeDocument } = require('../src/core/analysis.cjs');
 
 async function waitFor(predicate, timeout = 10000) {
   const end = Date.now() + timeout;
@@ -250,7 +251,10 @@ test('analysis settings reach workers and failed reanalysis preserves reviewed v
   let retained = service.document(doc.id); assert.equal(retained.values.total, '$12.00'); assert.equal(retained.reviewed, true);
   assert.equal(retained.analysis.mode, 'high'); assert.match(service.snapshot(id).documents[0].error, /previous result kept/);
   fail = false; await service.reanalyze(doc.id); await complete(service);
-  retained = service.document(doc.id); assert.equal(retained.values.total, '$10.00'); assert.equal(retained.reviewed, false); assert.equal(retained.analysis.mode, 'standard');
+  retained = service.document(doc.id); assert.equal(retained.values.total, '$12.00'); assert.equal(retained.reviewed, false); assert.equal(retained.analysis.mode, 'standard');
+  assert.equal(retained.analysis.manualCorrectionsKept, 1);
+  await service.feedback(doc.id, 'total', false); await service.reanalyze(doc.id); await complete(service);
+  assert.equal(service.document(doc.id).values.total, '$10.00');
   assert.equal(service.snapshot(id).documents.length, 1);
   await assert.rejects(service.setAnalysisMode(id, 'invalid'));
 });
@@ -282,12 +286,13 @@ test('v2 data migrates to Standard analysis and keeps existing values', async t 
     store.db.exec('ALTER TABLE collections DROP COLUMN analysis_mode');
     store.db.exec('ALTER TABLE documents DROP COLUMN analysis_json');
     store.db.exec('ALTER TABLE documents DROP COLUMN reprocess');
+    store.db.exec('ALTER TABLE documents DROP COLUMN feedback_json');
     store.db.exec('PRAGMA user_version = 2');
   });
   await service.stop();
   const reopened = await Store.open(data);
   try {
-    assert.equal(reopened.get('PRAGMA user_version').user_version, 3);
+    assert.equal(reopened.get('PRAGMA user_version').user_version, 4);
     const collection = reopened.get('SELECT * FROM collections WHERE id = ?', [id]);
     assert.equal(collection.name, 'Previous version'); assert.equal(collection.analysis_mode, 'standard');
     assert.equal(JSON.parse(reopened.get('SELECT values_json FROM documents WHERE collection_id = ?', [id]).values_json).vendor, 'Example Existing Seller');
@@ -299,4 +304,80 @@ test('real native LiteParse worker extracts a PDF using bundled assets', { timeo
   const file = path.join(root, 'invoice.pdf'); await fs.writeFile(file, pdfFixture());
   const result = await new ParserRunner().parse(file, []);
   assert.equal(result.pages.length, 1); assert.equal(result.values.vendor, 'Acme Supplies'); assert.equal(result.values.invoice_number, 'INV-100'); assert.equal(result.values.total, '$125.00');
+});
+
+test('teaching previews and saves a scoped source label, extracts new values, and rejects unverified examples', async t => {
+  const parser = { stop() {}, async parse(file, fields, mode) {
+    const pages = [{ number: 1, text: await fs.readFile(file, 'utf8') }];
+    return { pages, ...analyzeDocument(pages, fields, mode) };
+  } };
+  const { service, store, input, data } = await fixture(t, parser);
+  const id = await service.createCollection({ name: 'Teach example' });
+  const first = path.join(input, 'first.pdf'); await fs.writeFile(first, 'Vendor: Example\nInternal ref #: REF-001\nTotal: $10.00');
+  await service.importPaths(id, [first]); await complete(service);
+  let doc = service.document(service.snapshot(id).documents[0].id);
+  const config = { label: 'Purchase order', example: 'REF-001', anchor: '', reuse: true };
+  assert.equal(service.previewTeaching(doc.id, config).usable, true);
+  const before = service.collection(id).fields;
+  await assert.rejects(service.teach(doc.id, { ...config, example: 'WRONG', anchor: 'Internal ref #' }, doc.values));
+  assert.equal(service.collection(id).fields, before);
+  await service.teach(doc.id, config, { ...doc.values, total: '$12.00' });
+  doc = service.document(doc.id);
+  assert.equal(doc.reviewed, false); assert.equal(doc.values.purchase_order, 'REF-001'); assert.equal(doc.values.total, '$12.00');
+  assert.equal(doc.fields.find(field => field.name === 'purchase_order').hint.anchor, 'Internal ref #');
+  assert.ok(!service.collection(id).fields.includes('REF-001'));
+  const second = path.join(input, 'second.pdf'); await fs.writeFile(second, 'Vendor: Other\nInternal ref #: REF-999');
+  await service.importPaths(id, [second]); await complete(service);
+  assert.equal(service.snapshot(id).documents.find(row => row.name === 'second.pdf').values.purchase_order, 'REF-999');
+  const other = await service.createCollection({ kind: 'quick', name: 'Separate scope' });
+  await service.importPaths(other, [second]); await complete(service);
+  assert.equal(service.snapshot(other).documents[0].values.purchase_order, undefined);
+  await service.reanalyze(doc.id); await complete(service);
+  assert.equal(service.document(doc.id).values.total, '$12.00');
+  await assert.rejects(service.teach(doc.id, config, doc.values), /already exists/);
+  await service.stop(); const reopened = await Store.open(data);
+  try {
+    assert.ok(JSON.parse(reopened.get('SELECT fields FROM collections WHERE id = ?', [id]).fields).some(field => field.hint?.anchor === 'Internal ref #'));
+    assert.ok(JSON.parse(reopened.get('SELECT feedback_json FROM documents WHERE id = ?', [doc.id]).feedback_json).some(item => item.field === 'total' && item.status === 'corrected'));
+  } finally { await reopened.close(); }
+  assert.equal(store.closed, true);
+});
+
+test('missed-field flags survive drafts and reanalysis, require resolution, and are removed with retained content', async t => {
+  const { service, input, store } = await fixture(t);
+  const id = await service.createCollection({ name: 'Missed fields', retainContent: false });
+  const file = path.join(input, 'document.pdf'); await fs.writeFile(file, 'Vendor: Example');
+  await service.importPaths(id, [file]); await complete(service);
+  let doc = service.document(service.snapshot(id).documents[0].id);
+  await service.feedback(doc.id, 'vendor', true);
+  await service.saveReview(doc.id, doc.values);
+  await assert.rejects(service.review(doc.id, doc.values), /Resolve or clear/);
+  await service.teach(doc.id, { label: 'Delivery reference', example: '', reuse: false }, doc.values);
+  doc = service.document(doc.id);
+  assert.equal(doc.feedback.filter(item => item.status === 'missed').length, 2);
+  assert.equal(doc.reviewed, false); assert.equal(store.get('SELECT purged FROM documents WHERE id = ?', [doc.id]).purged, 0);
+  await service.reanalyze(doc.id); await complete(service);
+  doc = service.document(doc.id); assert.equal(doc.feedback.filter(item => item.status === 'missed').length, 2);
+  await service.feedback(doc.id, 'vendor', false);
+  await service.saveReview(doc.id, { ...doc.values, delivery_reference: 'FIXED' });
+  doc = service.document(doc.id); assert.equal(doc.feedback.find(item => item.field === 'delivery_reference').status, 'corrected');
+  await service.review(doc.id, doc.values);
+  assert.equal(service.snapshot(id).documents[0].purged, 1);
+  assert.deepEqual(JSON.parse(store.get('SELECT feedback_json FROM documents WHERE id = ?', [doc.id]).feedback_json), []);
+  assert.equal(parse(csvFor(store, service.collection(id)), { columns: true, bom: true })[0].delivery_reference, 'FIXED');
+});
+
+test('v3 migration conservatively protects reviewed values during later reanalysis', async t => {
+  const { service, store, input, data } = await fixture(t);
+  const id = await service.createCollection({ name: 'Previously reviewed' });
+  const file = path.join(input, 'old.pdf'); await fs.writeFile(file, 'Vendor: Example');
+  await service.importPaths(id, [file]); await complete(service);
+  const doc = service.snapshot(id).documents[0]; await service.review(doc.id, { vendor: 'Accepted supplier' });
+  await store.transaction(() => { store.db.exec('ALTER TABLE documents DROP COLUMN feedback_json'); store.db.exec('PRAGMA user_version = 3'); });
+  await service.stop(); const reopened = await Store.open(data);
+  try {
+    const feedback = JSON.parse(reopened.get('SELECT feedback_json FROM documents WHERE id = ?', [doc.id]).feedback_json);
+    assert.equal(feedback.find(item => item.field === 'vendor').status, 'corrected');
+    assert.equal(reopened.get('PRAGMA user_version').user_version, 4);
+  } finally { await reopened.close(); }
 });

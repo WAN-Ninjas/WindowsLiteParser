@@ -20,7 +20,7 @@
       <div class="local-badge"><span class="status-dot"></span> Runs on your computer</div>
       <p>No account. No uploads.<br>Your documents stay here.</p>
       <button class="text-button" id="open-data">Open data folder ↗</button>
-      <span class="version">LiteParse Portal · v0.2.0</span>
+      <span class="version">LiteParse Portal · v0.3.0</span>
     </div>
   </aside>
   <main>
@@ -63,8 +63,20 @@
   <dialog id="review-dialog" class="review-dialog">
     <form id="review-form"><div class="dialog-heading"><div><div class="eyebrow">REVIEW EXTRACTED FIELDS</div><h2 id="review-title"></h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div>
       <div id="analysis-summary" class="review-note"></div>
-      <div class="review-layout"><section><div class="review-note">Compare each value with the source text. Table columns use matching lines for each row, including repeated values. Add any missed labels; they become columns throughout this project.</div><div id="review-fields"></div><div id="additional-fields"></div><button type="button" class="text-button" id="review-add-field">＋ Add a missed field</button></section><section class="source-panel"><h3>Extracted source text</h3><pre id="source-text"></pre><p id="text-truncated" hidden>Preview limited to 200,000 characters.</p></section></div>
-      <div id="review-error" class="alert error" hidden></div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Close</button><button class="primary" type="submit">Save & mark reviewed</button></div>
+      <div class="review-tools"><button type="button" class="secondary" id="review-teach">＋ Teach a missing field</button><div class="actions"><select id="review-analysis" aria-label="Reanalysis quality"><option value="high">High accuracy</option><option value="standard">Standard</option></select><button type="button" class="secondary" id="review-reanalyze">Save draft & reanalyze</button></div></div>
+      <div class="review-layout"><section><section id="teach-panel" class="teach-panel" hidden>
+        <div class="field-section-heading"><h3>Name the field and show an example</h3><button type="button" class="text-button" id="teach-cancel">Close helper</button></div>
+        <p class="footnote">Select text on the right or type an example below. A new field becomes a CSV column throughout this project or conversion. Leave the example empty to flag a missing field for later.</p>
+        <div class="teach-grid"><label class="field-label">Existing field<select id="teach-existing"><option value="">Create a new field</option></select></label><label class="field-label">Field name<input id="teach-label" maxlength="80" placeholder="e.g. Purchase order number"></label></div>
+        <label class="field-label">Example / correct value<textarea id="teach-example" rows="2" maxlength="1000000" placeholder="e.g. PO-12345"></textarea></label>
+        <div class="teach-grid"><label class="field-label">Source label beside or above the value<input id="teach-anchor" maxlength="100" placeholder="e.g. Purchase Order #"></label><button type="button" class="secondary" id="teach-preview">Check source label</button></div>
+        <p id="teach-preview-result" class="review-note" role="status">A reusable label must match your example exactly once in this document.</p>
+        <label class="checkbox-label"><input type="checkbox" id="teach-reuse">Reuse this source label on later documents in this project or conversion</label>
+        <p class="footnote">Reuse applies to a single value beside or below a label. It never copies the example into other documents. Uncheck to save only this document and remove this field's saved label rule. Saved fixes stay in place during reanalysis.</p>
+        <button type="button" class="primary" id="teach-save">Save field & draft</button>
+      </section>
+      <div class="review-note">Flag missed or incorrect values, teach a field, or correct values directly. Table columns use matching lines for each row, including repeated values.</div><div id="review-fields"></div><div id="additional-fields"></div><button type="button" class="text-button" id="review-add-field">＋ Add a field manually</button></section><section class="source-panel"><h3>Extracted source text</h3><p class="footnote">Highlight a value, then use it as an example for a missing field.</p><button type="button" class="secondary" id="use-selection" disabled>Use selected text as example</button><pre id="source-text"></pre><p id="text-truncated" hidden>Preview limited to 200,000 characters.</p></section></div>
+      <div id="review-error" class="alert error" hidden></div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Close</button><button type="button" class="secondary" id="review-draft">Save draft</button><button class="primary" type="submit">Save & mark reviewed</button></div>
     </form>
   </dialog>
   <div id="toast" role="status" aria-live="polite" hidden></div>

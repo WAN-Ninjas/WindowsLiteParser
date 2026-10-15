@@ -80,6 +80,10 @@ function registerHandlers() {
   handle('portal:reveal-data', () => { shell.showItemInFolder(path.join(service.directory, 'portal.sqlite')); });
   handle('portal:document', id => service.document(id));
   handle('portal:review', (id, values, additional) => service.review(id, values, additional));
+  handle('portal:draft', (id, values, additional) => service.saveReview(id, values, additional));
+  handle('portal:preview-teaching', (id, config) => service.previewTeaching(id, config));
+  handle('portal:teach', (id, config, values, additional) => service.teach(id, config, values, additional));
+  handle('portal:feedback', (id, name, flagged) => service.feedback(id, name, flagged));
   handle('portal:retention', (id, retain) => service.setRetention(id, retain));
   handle('portal:retry', id => service.retry(id));
   handle('portal:analysis-mode', (id, mode) => service.setAnalysisMode(id, mode));
@@ -87,7 +91,7 @@ function registerHandlers() {
     const doc = service.document(id);
     if (doc.reviewed) {
       const result = await dialog.showMessageBox(window, { type: 'question', buttons: ['Cancel', 'Reanalyze'], defaultId: 0, cancelId: 0,
-        message: 'Replace this reviewed result?', detail: 'Successful reanalysis replaces saved values and corrections, and marks the document for review again. The previous result stays in the CSV if reanalysis fails.' });
+        message: 'Reanalyze this reviewed document?', detail: 'Reanalysis refreshes automatic values and marks the document for review again. Saved manual corrections are kept. The previous result stays in the CSV if reanalysis fails.' });
       if (result.response !== 1) return false;
     }
     await service.reanalyze(id); return true;

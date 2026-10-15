@@ -61,11 +61,52 @@ async function run({ service, window }) {
     await until(() => evaluate('document.querySelector("#review-dialog").open'), 'layout review');
     assert.equal(await evaluate('document.querySelector("#review-fields textarea[name=line_item_qty]").value'), Array(10).fill('1').join('\n'));
     assert.match(await evaluate('document.querySelector("#analysis-summary").textContent'), /10 data row/);
+    const quickDoc = service.snapshot(quick.id).documents[0];
+    // Select actual source text, name it, preview its label, and save a reusable rule through IPC.
+    await evaluate(`{
+      const node = document.querySelector('#source-text').firstChild;
+      const start = node.textContent.indexOf('Payment due upon receipt');
+      if (start < 0) throw new Error('Example source text missing');
+      const range = document.createRange(); range.setStart(node, start); range.setEnd(node, start + 'Payment due upon receipt'.length);
+      const selection = window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+    }`);
+    await until(() => evaluate('!document.querySelector("#use-selection").disabled'), 'source selection');
+    await evaluate('document.querySelector("#use-selection").click();');
+    await until(() => evaluate('!document.querySelector("#teach-panel").hidden && !document.querySelector("#teach-save").disabled'), 'teaching helper');
+    assert.equal(await evaluate('document.querySelector("#teach-example").value'), 'Payment due upon receipt');
+    await evaluate('document.querySelector("#teach-label").value="Payment policy"; document.querySelector("#teach-anchor").value="Terms & Conditions"; document.querySelector("#teach-preview").click();');
+    await until(() => evaluate('document.querySelector("#teach-preview-result").textContent.includes("One source match")'), 'verified teaching preview');
+    if (process.env.PORTAL_SMOKE_SCREENSHOT) {
+      await fs.mkdir(path.dirname(process.env.PORTAL_SMOKE_SCREENSHOT), { recursive: true });
+      const screenshot = process.env.PORTAL_SMOKE_SCREENSHOT.replace(/\.png$/i, '-review.png');
+      await fs.writeFile(screenshot, (await window.webContents.capturePage()).toPNG());
+    }
+    await evaluate('document.querySelector("#teach-reuse").checked=true; document.querySelector("#teach-save").click();');
+    await until(() => evaluate('Boolean(document.querySelector("#review-fields input[name=payment_policy]"))'), 'taught field in review');
+    assert.equal(service.document(quickDoc.id).reviewed, false);
+    await evaluate('document.querySelector("[data-field=invoice_number] [data-action=flag]").click();');
+    await until(() => evaluate('document.querySelector("[data-field=invoice_number]").classList.contains("flagged")'), 'missed field tagged');
+    await evaluate('document.querySelector("#review-reanalyze").click();');
+    await until(() => evaluate('!document.querySelector("#review-dialog").open'), 'reanalyze inside review');
+    await until(() => !service.running && service.document(quickDoc.id).analysis.manualCorrectionsKept === 1, 'correction kept in reanalysis');
+    await until(() => evaluate('document.querySelectorAll("#documents button").length === 2'), 'reanalyzed quick conversion');
+    await evaluate('document.querySelector("#documents button").click();');
+    await until(() => evaluate('document.querySelector("#review-dialog").open'), 'reopen flagged review');
+    assert.equal(await evaluate('document.querySelector("#review-fields input[name=payment_policy]").value'), 'Payment due upon receipt');
+    await evaluate('document.querySelector("#review-form").requestSubmit();');
+    await until(() => evaluate('!document.querySelector("#review-error").hidden'), 'unresolved flag blocks reviewed status');
+    assert.match(await evaluate('document.querySelector("#review-error").textContent'), /Resolve or clear/);
+    await evaluate('document.querySelector("[data-field=invoice_number] [data-action=clear-feedback]").click();');
+    await until(() => evaluate('!document.querySelector("[data-field=invoice_number]").classList.contains("flagged")'), 'flag cleared');
     await evaluate('document.querySelector("#review-form").requestSubmit();');
     await until(() => evaluate('!document.querySelector("#review-dialog").open'), 'multiline review saved');
     await service.exports;
     const quickRows = parse(await fs.readFile(service.collection(quick.id).output_path, 'utf8'), { columns: true, bom: true });
     assert.equal(quickRows[0].line_item_qty, Array(10).fill('1').join('\n')); assert.equal(quickRows[0].line_item_count, '10');
+    const later = path.join(root, 'later-invoice.pdf'); await fs.writeFile(later, pdfFixture(['Vendor: Example Later Supplier', 'Terms & Conditions', 'Net 30']));
+    await service.importPaths(quick.id, [later]); await until(() => !service.running, 'future document with taught rule');
+    const laterDoc = service.snapshot(quick.id).documents.find(doc => doc.name === 'later-invoice.pdf');
+    assert.equal(laterDoc.values.payment_policy, 'Net 30'); assert.equal(laterDoc.analysis.taughtFields[0].status, 'matched');
     await evaluate('document.querySelector("#nav-projects").click();');
     await until(() => evaluate('document.querySelectorAll("#sidebar-collections button").length === 1'), 'project navigation');
     await evaluate('document.querySelector("#sidebar-collections button").click();');
@@ -88,7 +129,7 @@ async function run({ service, window }) {
     }
     assert.equal(await evaluate('typeof window.require'), 'undefined');
     assert.equal(await evaluate('typeof window.process'), 'undefined');
-    console.log('SMOKE PASSED: renderer, project and quick creation, high accuracy layout and ten-row invoice, multiline review, reanalysis IPC, isolated native parsing, schema expansion, CSV, offline OCR, renderer isolation.');
+    console.log('SMOKE PASSED: source selection, verified field teaching, future-document extraction, persistent missed-field flags, protected corrections, review reanalysis, multiline CSV review, project and quick creation, native parsing, offline OCR, renderer isolation.');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }
 

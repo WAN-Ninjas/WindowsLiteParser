@@ -5,6 +5,9 @@ let state;
 let kind = 'project';
 let selectedId = null;
 let reviewId = null;
+let reviewDoc = null;
+let selectedSourceText = '';
+let reviewBusy = false;
 let currentPage = 0;
 let refreshVersion = 0;
 let toastTimer;
@@ -112,6 +115,8 @@ function renderDetail(collection) {
     else label = { failed: 'Failed', queued: 'Queued', processing: 'Converting…' }[doc.status];
     const status = element('td'); status.append(element('span', label, `status ${css}`));
     if (doc.analysis.warnings?.length) status.append(element('span', `${doc.analysis.warnings.length} analysis warning(s)`, 'file-meta'));
+    const flags = doc.feedback.filter(item => item.status === 'missed').length;
+    if (flags) status.append(element('span', `${flags} missed-field flag(s)`, 'flag-note'));
     if (doc.error) { status.title = doc.error; const note = element('span', doc.error.slice(0, 90), 'file-meta'); status.append(note); }
     const when = element('td', shortDate(doc.created_at));
     const control = element('td');
@@ -174,22 +179,25 @@ async function importDocuments(button, folder) {
 }
 
 async function openReview(id) {
-  const doc = await window.portal.document(id); reviewId = doc.id;
+  const doc = await window.portal.document(id); reviewId = doc.id; reviewDoc = doc;
+  selectedSourceText = ''; $('#use-selection').disabled = true; $('#teach-panel').hidden = true;
+  $('#review-analysis').value = doc.analysisMode;
   $('#review-title').textContent = doc.name;
   const analysis = doc.analysis;
   const summary = [analysis.mode === 'high' ? 'High accuracy analysis' : analysis.mode === 'standard' ? 'Standard analysis' : 'Earlier conversion'];
   if (analysis.tableCount) summary.push(`${analysis.tableCount} table(s) · ${analysis.tableRowCount} data row(s)`);
   for (const check of analysis.checks || []) summary.push(`${check.passed ? '✓' : 'Check needed:'} ${check.label}`);
   summary.push(...(analysis.warnings || []));
+  if (analysis.manualCorrectionsKept) summary.push(`${analysis.manualCorrectionsKept} saved manual correction(s) kept`);
   $('#analysis-summary').textContent = summary.join(' · ');
   const fields = doc.fields.map(field => {
+    const row = element('div', undefined, 'review-field'); row.dataset.field = field.name;
     const label = element('label', `${field.label}${field.required ? ' *' : ''}`, `field-label${doc.missing.includes(field.name) ? ' missing' : ''}`);
     const value = doc.values[field.name] || '';
     const input = element(value.includes('\n') || field.name.startsWith('line_item_') ? 'textarea' : 'input');
     input.name = field.name; input.value = value; input.required = field.required; input.maxLength = 1000000;
     if (input.tagName === 'TEXTAREA') input.rows = Math.min(10, Math.max(3, value.split('\n').length));
-    if (doc.missing.includes(field.name)) label.append(element('span', 'Value not found — check the source text', 'missing-label'));
-    label.append(input); return label;
+    label.append(input); row.append(label, element('p', '', 'field-note'), element('div', undefined, 'field-actions')); return row;
   });
   $('#review-fields').replaceChildren(...fields);
   if (!fields.length) $('#review-fields').append(element('p', 'No labeled values were found. Add fields manually from the source text.', 'footnote'));
@@ -197,7 +205,79 @@ async function openReview(id) {
   $('#source-text').textContent = doc.text;
   $('#text-truncated').hidden = !doc.truncated;
   $('#review-error').hidden = true;
-  $('#review-dialog').showModal();
+  renderReviewFeedback();
+  if (!$('#review-dialog').open) $('#review-dialog').showModal();
+}
+
+function reviewDraft() {
+  return {
+    values: Object.fromEntries([...$('#review-fields').querySelectorAll('input[name], textarea[name]')].map(input => [input.name, input.value])),
+    additional: [...$('#additional-fields').children].map(node => ({ label: node.querySelector('[data-role=label]').value, value: node.querySelector('[data-role=value]').value }))
+  };
+}
+
+async function reviewAction(operation) {
+  if (reviewBusy) return;
+  reviewBusy = true; $('#review-error').hidden = true;
+  const controls = [...$('#review-dialog').querySelectorAll('button, input, textarea, select')].map(node => [node, node.disabled]);
+  controls.forEach(([node]) => { node.disabled = true; });
+  try { await operation(); }
+  catch (error) { $('#review-error').textContent = errorText(error); $('#review-error').hidden = false; }
+  finally {
+    controls.forEach(([node, disabled]) => { if (node.isConnected) node.disabled = disabled; });
+    $('#teach-label').disabled = Boolean($('#teach-existing').value);
+    $('#use-selection').disabled = !selectedSourceText.trim();
+    reviewBusy = false;
+  }
+}
+
+function renderReviewFeedback() {
+  for (const row of $('#review-fields').children) {
+    const field = reviewDoc.fields.find(field => field.name === row.dataset.field);
+    if (!field) continue;
+    const feedback = reviewDoc.feedback.find(item => item.field === field.name);
+    const taught = reviewDoc.analysis.taughtFields?.find(item => item.field === field.name);
+    const note = row.querySelector('.field-note');
+    row.classList.toggle('flagged', feedback?.status === 'missed');
+    note.textContent = feedback?.status === 'missed' ? 'Flagged: missing or incorrect. Fix the value or clear the flag before marking reviewed.' : feedback?.status === 'corrected' ? 'Saved manual correction · kept during reanalysis' : taught?.status === 'matched' ? `Suggested from source label “${taught.anchor}” · check against the source` : taught ? 'Saved source label needs attention · see analysis warning' : reviewDoc.missing.includes(field.name) ? 'Required value not found' : '';
+    const actions = row.querySelector('.field-actions'); actions.replaceChildren();
+    const teach = element('button', 'Teach / fix', 'text-button'); teach.type = 'button';
+    teach.onclick = () => openTeach(field.name, row.querySelector('input, textarea').value || selectedSourceText);
+    actions.append(teach);
+    if (feedback) {
+      const clear = element('button', feedback.status === 'missed' ? 'Clear flag' : 'Allow automatic extraction', 'text-button'); clear.type = 'button';
+      clear.dataset.action = 'clear-feedback';
+      clear.onclick = () => reviewAction(async () => { reviewDoc.feedback = await window.portal.feedback(reviewId, field.name, false); renderReviewFeedback(); });
+      actions.append(clear);
+    }
+    if (feedback?.status !== 'missed') {
+      const flag = element('button', 'Flag as missed / incorrect', 'text-button'); flag.type = 'button';
+      flag.dataset.action = 'flag';
+      flag.onclick = () => reviewAction(async () => { reviewDoc.feedback = await window.portal.feedback(reviewId, field.name, true); renderReviewFeedback(); });
+      actions.append(flag);
+    }
+  }
+}
+
+function openTeach(name = '', example = '') {
+  const select = $('#teach-existing');
+  select.replaceChildren(new Option('Create a new field', ''), ...reviewDoc.fields.map(field => new Option(field.label, field.name)));
+  select.value = name; const field = reviewDoc.fields.find(field => field.name === name);
+  $('#teach-label').value = field?.label || ''; $('#teach-label').disabled = Boolean(field);
+  $('#teach-example').value = example; $('#teach-anchor').value = field?.hint?.anchor || '';
+  $('#teach-reuse').checked = Boolean(field?.hint);
+  $('#teach-preview-result').textContent = 'Check the source label to preview a reusable match. You can also save this document only.';
+  $('#teach-panel').hidden = false;
+  $('#teach-panel').scrollIntoView({ block: 'nearest' });
+  (field ? $('#teach-example') : $('#teach-label')).focus();
+}
+
+function teachingConfig() { return { field: $('#teach-existing').value, label: $('#teach-label').value, example: $('#teach-example').value, anchor: $('#teach-anchor').value, reuse: $('#teach-reuse').checked }; }
+
+async function previewField() {
+  const preview = await window.portal.previewTeaching(reviewId, teachingConfig());
+  $('#teach-anchor').value = preview.anchor;
+  $('#teach-preview-result').textContent = `${preview.message}${preview.match ? ` Page ${preview.match.page}: “${preview.match.value}”` : ''}`;
 }
 
 $('#nav-projects').onclick = () => navigate('project');
@@ -231,14 +311,43 @@ $('#create-form').onsubmit = async event => {
   finally { button.disabled = false; }
 };
 $('#review-form').onsubmit = async event => {
-  event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
-  try {
-    const values = Object.fromEntries([...$('#review-fields').querySelectorAll('input, textarea')].map(input => [input.name, input.value]));
-    const additional = [...$('#additional-fields').children].map(node => ({ label: node.querySelector('[data-role=label]').value, value: node.querySelector('[data-role=value]').value }));
+  event.preventDefault();
+  await reviewAction(async () => {
+    const { values, additional } = reviewDraft();
     await window.portal.review(reviewId, values, additional); $('#review-dialog').close(); toast('Review saved. Your CSV is up to date.'); await refresh();
-  } catch (error) { $('#review-error').textContent = errorText(error); $('#review-error').hidden = false; }
-  finally { button.disabled = false; }
+  });
 };
+$('#review-draft').onclick = () => reviewAction(async () => {
+  const { values, additional } = reviewDraft(); await window.portal.draft(reviewId, values, additional);
+  await openReview(reviewId); toast('Draft saved. This document still needs review.');
+});
+$('#review-reanalyze').onclick = () => reviewAction(async () => {
+  const quality = $('#review-analysis').value; const { values, additional } = reviewDraft();
+  await window.portal.draft(reviewId, values, additional);
+  await window.portal.analysisMode(reviewDoc.collectionId, quality);
+  if (await window.portal.reanalyze(reviewId)) { $('#review-dialog').close(); toast('Queued for reanalysis. Saved manual corrections and missed-field flags are kept.'); }
+  await refresh();
+});
+$('#review-teach').onclick = () => openTeach('', selectedSourceText);
+$('#teach-cancel').onclick = () => { $('#teach-panel').hidden = true; };
+$('#teach-existing').onchange = () => {
+  const field = reviewDoc.fields.find(field => field.name === $('#teach-existing').value);
+  $('#teach-label').value = field?.label || ''; $('#teach-label').disabled = Boolean(field);
+  $('#teach-anchor').value = field?.hint?.anchor || ''; $('#teach-reuse').checked = Boolean(field?.hint);
+};
+$('#teach-preview').onclick = () => reviewAction(previewField);
+$('#teach-save').onclick = () => reviewAction(async () => {
+  const { values, additional } = reviewDraft(); await window.portal.teach(reviewId, teachingConfig(), values, additional);
+  await openReview(reviewId); toast('Field and draft saved. Review the result before marking complete.');
+});
+document.addEventListener('selectionchange', () => {
+  if (!$('#review-dialog').open || reviewBusy) return;
+  const selection = window.getSelection();
+  if (selection && $('#source-text').contains(selection.anchorNode) && $('#source-text').contains(selection.focusNode)) {
+    selectedSourceText = selection.toString().slice(0, 1000000); $('#use-selection').disabled = !selectedSourceText.trim();
+  }
+});
+$('#use-selection').onclick = () => reviewAction(async () => { openTeach('', selectedSourceText); if (selectedSourceText.length <= 10000) await previewField(); });
 $('#review-add-field').onclick = () => {
   const row = element('div', undefined, 'additional-field');
   const label = element('input'); label.dataset.role = 'label'; label.placeholder = 'Field label'; label.required = true; label.maxLength = 80; label.setAttribute('aria-label', 'New field label');

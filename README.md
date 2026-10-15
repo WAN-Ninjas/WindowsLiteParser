@@ -9,14 +9,14 @@ Download a Windows portable `.exe`, or extract the Windows ZIP and run **LitePar
 On Linux, download the `.AppImage`, mark it executable, and launch it as your normal user:
 
 ```sh
-chmod +x LiteParse-Portal-0.2.0-linux-x86_64.AppImage
-./LiteParse-Portal-0.2.0-linux-x86_64.AppImage
+chmod +x LiteParse-Portal-0.3.0-linux-x86_64.AppImage
+./LiteParse-Portal-0.3.0-linux-x86_64.AppImage
 ```
 
 The AppImage uses the pinned modern static runtime rather than the legacy FUSE 2 runtime. If FUSE mounting is unavailable, its built-in extraction mode runs without installing FUSE or using administrator permissions:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.2.0-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.3.0-linux-x86_64.AppImage
 ```
 
 Extraction mode unpacks to a temporary directory and cleans it up when the app closes. Project data stays beside the original AppImage in **LiteParse Portal Data**. You can alternatively extract the `.tar.gz` and launch `liteparse-portal`.
@@ -30,9 +30,19 @@ Both formats include Electron, the parser, PDFium, SQLite, and the English OCR m
 5. **Quick conversions:** create a quick conversion for a single file or a batch. It uses the same automatic fields, review, retention, and CSV pipeline without a watched folder. History persists between sessions.
 6. **Retention:** choose this when creating a project or change it in the project detail. **Keep document content long term** retains imported copies, page text, and extracted values. **Remove content after review & CSV export** deletes that content only after you mark a document reviewed and the CSV has been saved successfully. Unreviewed and failed documents stay available locally. Minimal IDs, content hashes, status, and timestamps remain for duplicate detection. Previously exported-only rows are read from the existing CSV when the schema expands. Keep that CSV backed up: its records cannot be reconstructed from the database after removal. Changing back to “keep” applies to remaining and future content; it cannot restore removed data. Deletion is logical deletion, not a secure disk wipe.
 7. **Analysis quality:** new projects and quick conversions default to **High accuracy**, which uses positioned text, native table cells, PDF form fields, invoice layout rules, and 300 DPI English OCR for scans. **Standard** uses the original text discovery and 150 DPI OCR. Digital text is read directly; increasing OCR resolution helps scans rather than rewriting clear embedded text. Change **Analysis quality** in a project or conversion to affect waiting and future files. A running file finishes with its original setting.
-8. **Reanalyze:** use the document's **Reanalyze** button to apply the selected quality to a retained source without creating a duplicate. Existing CSV values remain available while it runs. Success replaces that document's extracted values and returns it to **Needs review**; failure keeps the previous result and displays the error. Replacing reviewed corrections requires confirmation. Removed source content cannot be reanalyzed. Existing project columns remain to preserve history; start a new conversion if you want a fresh schema. Review shows the analysis mode, table row counts, warnings, and applicable line-item/total checks. These checks describe the original extraction, not subsequent manual edits.
+8. **Reanalyze:** use the document's **Reanalyze** button or **Save draft & reanalyze** inside Review to apply the selected quality to a retained source without creating a duplicate. Existing CSV values remain available while it runs. Success refreshes automatic values and returns the document to **Needs review**; failure keeps the previous result and displays the error. Saved manual corrections and missed-field flags survive reanalysis. **Allow automatic extraction** under a corrected field releases its protection for a later reanalysis. Removed source content cannot be reanalyzed. Existing project columns remain to preserve history; start a new conversion if you want a fresh schema. Review shows the analysis mode, table row counts, warnings, and applicable line-item/total checks. These checks describe the original extraction, not subsequent manual edits.
 
-When upgrading, close Portal and keep its **LiteParse Portal Data** folder. SQLite migrates automatically. Existing projects retain **Standard** until you change their quality setting. Back up the data folder and externally chosen CSVs before upgrading; older app versions cannot open the migrated database.
+## Teaching and flagging fields during review
+
+Open **Review** and highlight a value in **Extracted source text**, then click **Use selected text as example**. Alternatively, click **Teach a missing field** and type the example. Choose a new field name or select an existing field to fix. **Save field & draft** adds the column if necessary, saves the correction in SQLite, and updates the CSV while keeping the document in **Needs review**. Other edits in the review form are saved with it. An empty example adds a persistent missed-field flag.
+
+To reuse a field on later documents, enter the literal source label immediately beside or above its value, such as `Purchase Order #`, and click **Check source label**. The helper can suggest a label from the selected example. A rule can be saved only if exactly one source match agrees with that example. Check **Reuse this source label on later documents** before saving. Only the label and its position beside or above a value are stored in the project schema; the example is never copied into other documents. Future imports and explicit reanalysis use the saved rule in either analysis mode. Reuse is scoped to the current project or quick conversion. It does not automatically rewrite older documents or other projects.
+
+Reusable rules cover one value beside or below a label. Arbitrary page regions, repeating table-column mappings, and semantic inference from unlabeled examples are not supported by this helper. Those examples can still be saved as corrections for this document. If a saved label is absent or ambiguous in a later document, its field stays blank and an analysis warning explains why. Suggested matches remain subject to review. To change or stop reusing a label, open **Teach / fix** for that field, change its label rule or uncheck reuse, and save.
+
+Each field also has **Flag as missed / incorrect**. The flag is stored immediately, appears on the document in the list, survives restart and reanalysis, and prevents marking the document reviewed until the value is corrected or the flag is explicitly cleared. **Save draft** stores unfinished edits and updates the CSV without marking reviewed or triggering removal retention. **Save & mark reviewed** completes the review; retention cleanup happens only after successful CSV export. Source selection uses extracted text, rather than clickable boxes on a rendered PDF.
+
+When upgrading, close Portal and keep its **LiteParse Portal Data** folder. SQLite migrates automatically. Existing analysis settings are preserved; projects created before 0.2.0 keep **Standard** until changed. Since older versions did not record which reviewed values were corrections, migration protects all nonempty reviewed values; release any field with **Allow automatic extraction** if it should be refreshed. Back up the data folder and externally chosen CSVs before upgrading; older app versions cannot open the migrated database.
 
 ## Extraction scope
 

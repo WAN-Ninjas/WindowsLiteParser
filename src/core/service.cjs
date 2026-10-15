@@ -8,6 +8,7 @@ const { DEFAULT_FIELDS, validateFields, mergeFields, fieldName } = require('./ex
 const { walk, stageFile, supported, inside } = require('./files.cjs');
 const { exportCsv } = require('./csv.cjs');
 const { profile } = require('./analysis.cjs');
+const { previewTeaching } = require('./teaching.cjs');
 
 class PortalService extends EventEmitter {
   constructor(store, directory, parser) {
@@ -70,9 +71,9 @@ class PortalService extends EventEmitter {
     const predicate = predicates[options.filter] ?? '';
     const documentTotal = id ? this.store.get(`SELECT COUNT(*) AS count FROM documents WHERE collection_id = ?${predicate}`, [String(id)]).count : 0;
     const page = Math.min(Math.max(0, Math.floor(Number(options.page) || 0)), Math.max(0, Math.ceil(documentTotal / 100) - 1));
-    const documents = id ? this.store.all(`SELECT id, name, status, error, page_count, bytes, values_json, missing_json, reviewed, created_at, purged, reprocess, analysis_json
+    const documents = id ? this.store.all(`SELECT id, name, status, error, page_count, bytes, values_json, missing_json, reviewed, created_at, purged, reprocess, analysis_json, feedback_json
       FROM documents WHERE collection_id = ?${predicate} ORDER BY sequence DESC LIMIT 100 OFFSET ?`, [String(id), page * 100])
-      .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json), analysis: JSON.parse(row.analysis_json) })) : [];
+      .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json), analysis: JSON.parse(row.analysis_json), feedback: JSON.parse(row.feedback_json) })) : [];
     const counts = this.store.all('SELECT status, COUNT(*) AS count FROM documents GROUP BY status');
     return { collections, documents, counts, page, documentTotal, pageSize: 100, paused: this.paused, fatalError: this.fatalError, dataDirectory: this.directory, defaultFields: DEFAULT_FIELDS };
   }
@@ -136,6 +137,11 @@ class PortalService extends EventEmitter {
         // This persistence error is fatal; do not mislabel a successful parse as a bad document.
         await this.store.transaction(() => {
           const fields = mergeFields(JSON.parse(this.collection(doc.collection_id).fields), parsed.discovered || []);
+          const previous = JSON.parse(doc.values_json);
+          const corrected = JSON.parse(doc.feedback_json).filter(item => item.status === 'corrected');
+          for (const item of corrected) parsed.values[item.field] = previous[item.field] ?? '';
+          parsed.missing = fields.filter(field => field.required && !parsed.values[field.name]).map(field => field.name);
+          parsed.analysis = { ...parsed.analysis, manualCorrectionsKept: corrected.length };
           this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), doc.collection_id]);
           this.store.run('DELETE FROM pages WHERE document_id = ?', [doc.id]);
           for (const page of parsed.pages) this.store.run('INSERT INTO pages(document_id, number, text) VALUES(?,?,?)', [doc.id, page.number, page.text]);
@@ -181,28 +187,85 @@ class PortalService extends EventEmitter {
     let remaining = 200000;
     return { id: row.id, name: row.name, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json),
       fields: JSON.parse(collection.fields), reviewed: Boolean(row.reviewed), analysis: JSON.parse(row.analysis_json),
+      collectionId: collection.id, analysisMode: collection.analysis_mode, feedback: JSON.parse(row.feedback_json),
       text: pages.map(page => { const text = `--- Page ${page.number} ---\n${page.text}\n`; const part = text.slice(0, Math.max(0, remaining)); remaining -= text.length; return part; }).join('\n'),
       truncated: remaining < 0 };
   }
-  async review(id, values, additional = []) {
+  previewTeaching(id, config) {
+    this.guard(); this.document(id);
+    const pages = this.store.all('SELECT number, text FROM pages WHERE document_id = ? ORDER BY number', [String(id)]);
+    return previewTeaching(pages, config.example, config.anchor || '');
+  }
+  async feedback(id, name, flagged) {
+    this.guard(); const doc = this.document(id);
+    if (!doc.fields.some(field => field.name === name)) throw new Error('Choose an existing field.');
+    if (this.purging.has(doc.id)) throw new Error('Document content is being removed.');
+    const feedback = doc.feedback.filter(item => item.field !== name);
+    if (flagged) feedback.push({ field: name, status: 'missed', updatedAt: new Date().toISOString() });
+    await this.store.transaction(() => this.store.run('UPDATE documents SET feedback_json = ?, reviewed = 0 WHERE id = ?', [JSON.stringify(feedback), doc.id]));
+    await this.updateExport(doc.collectionId); this.emit('change');
+    return feedback;
+  }
+  async teach(id, config, values, additional = []) {
+    this.guard(); const doc = this.document(id);
+    const labelLimit = config?.field ? 100 : 80;
+    if (!config || typeof config.label !== 'string' || !config.label.trim() || config.label.trim().length > labelLimit) throw new Error(`Enter a field name of at most ${labelLimit} characters.`);
+    if (typeof config.example !== 'string' || config.example.length > 1000000) throw new Error('Enter an example of at most 1,000,000 characters, or leave it blank to flag the field.');
+    const name = config.field || fieldName(config.label.trim());
+    if (config.field && !doc.fields.some(field => field.name === name)) throw new Error('Choose an existing field.');
+    if (!config.field && doc.fields.some(field => field.name === name)) throw new Error('This column already exists. Select it under Existing field.');
+    let hint;
+    if (config.reuse) {
+      const preview = this.previewTeaching(id, config);
+      if (!preview.usable) throw new Error(preview.message);
+      hint = preview.hint;
+    }
+    await this.saveReview(id, values, additional, false, { name, label: config.label.trim(), example: config.example, hint });
+  }
+  async review(id, values, additional = []) { return this.saveReview(id, values, additional, true); }
+  async saveReview(id, values, additional = [], reviewed = false, teaching = null) {
     this.guard();
     const doc = this.document(id);
-    const row = this.store.get('SELECT collection_id FROM documents WHERE id = ?', [doc.id]);
-    const newFields = additional.map(field => ({ name: fieldName(String(field.label).slice(0, 80)), label: String(field.label).slice(0, 80), value: String(field.value).slice(0, 10000) }));
+    if (this.purging.has(doc.id)) throw new Error('Document content is being removed.');
+    if (!Array.isArray(additional) || additional.length > 250) throw new Error('A document supports at most 250 additional fields.');
+    const names = new Set(doc.fields.map(field => field.name));
+    const newFields = additional.map(field => {
+      if (typeof field?.label !== 'string' || !field.label.trim() || field.label.trim().length > 80) throw new Error('Each additional field needs a name of at most 80 characters.');
+      if (typeof field.value !== 'string' || field.value.length > 1000000) throw new Error('Each field value must be text of at most 1,000,000 characters.');
+      const name = fieldName(field.label.trim());
+      if (names.has(name)) throw new Error('This column already exists. Use its value box or Teach / fix.');
+      names.add(name);
+      return { name, label: field.label.trim(), value: field.value };
+    });
     const fields = mergeFields(doc.fields, newFields);
+    const feedback = new Map(doc.feedback.map(item => [item.field, item]));
+    if (teaching) {
+      if (!fields.some(field => field.name === teaching.name)) fields.push({ name: teaching.name, label: teaching.label, pattern: '', required: false });
+      const field = fields.find(field => field.name === teaching.name);
+      if (teaching.hint) { field.hint = teaching.hint; field.pattern = ''; }
+      else delete field.hint;
+    }
+    validateFields(fields);
     const clean = {};
     for (const field of fields) {
-      const value = newFields.find(item => item.name === field.name)?.value ?? values?.[field.name] ?? '';
+      const value = teaching?.name === field.name ? teaching.example : newFields.find(item => item.name === field.name)?.value ?? values?.[field.name] ?? doc.values[field.name] ?? '';
       if (typeof value !== 'string' || value.length > 1000000) throw new Error('Each field value must be text of at most 1,000,000 characters.');
       clean[field.name] = /^(?:line_item_|table_\d+_)/.test(field.name) ? value : value.trim();
+      if (teaching?.name === field.name || clean[field.name] !== (doc.values[field.name] ?? '')) {
+        const stillMissed = !clean[field.name].trim() && (teaching?.name === field.name || feedback.get(field.name)?.status === 'missed');
+        const status = stillMissed ? 'missed' : 'corrected';
+        feedback.set(field.name, { field: field.name, status, updatedAt: new Date().toISOString() });
+      }
     }
     const missing = fields.filter(field => field.required && !clean[field.name]).map(field => field.name);
-    if (missing.length) throw new Error(`Fill the required fields before marking reviewed: ${missing.join(', ')}`);
+    if (reviewed && missing.length) throw new Error(`Fill the required fields before marking reviewed: ${missing.join(', ')}`);
+    const unresolved = [...feedback.values()].filter(item => item.status === 'missed');
+    if (reviewed && unresolved.length) throw new Error(`Resolve or clear missed-field flags before marking reviewed: ${unresolved.map(item => item.field).join(', ')}`);
     await this.store.transaction(() => {
-      this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), row.collection_id]);
-      this.store.run('UPDATE documents SET values_json = ?, missing_json = ?, reviewed = 1 WHERE id = ?', [JSON.stringify(clean), JSON.stringify(missing), doc.id]);
+      this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), doc.collectionId]);
+      this.store.run('UPDATE documents SET values_json = ?, missing_json = ?, feedback_json = ?, reviewed = ? WHERE id = ?', [JSON.stringify(clean), JSON.stringify(missing), JSON.stringify([...feedback.values()]), reviewed ? 1 : 0, doc.id]);
     });
-    await this.updateExport(row.collection_id);
+    await this.updateExport(doc.collectionId);
     this.emit('change');
   }
   async updateExport(id, destination) {
@@ -241,7 +304,7 @@ class PortalService extends EventEmitter {
         const latest = this.store.get('SELECT values_json, reviewed, purged, reprocess FROM documents WHERE id = ?', [row.id]);
         if (latest.purged || latest.reprocess || !latest.reviewed || latest.values_json !== row.values_json) return;
         this.store.run('DELETE FROM pages WHERE document_id = ?', [row.id]);
-        this.store.run("UPDATE documents SET purged = 1, values_json = '{}', missing_json = '[]', analysis_json = '{}', name = 'Exported document', source_path = '', staged_path = '' WHERE id = ?", [row.id]);
+        this.store.run("UPDATE documents SET purged = 1, values_json = '{}', missing_json = '[]', analysis_json = '{}', feedback_json = '[]', name = 'Exported document', source_path = '', staged_path = '' WHERE id = ?", [row.id]);
       });
     }
   }

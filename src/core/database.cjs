@@ -15,7 +15,7 @@ class Store {
       await fs.promises.chmod(filename, 0o600);
       if (store.get('PRAGMA integrity_check').integrity_check !== 'ok') throw new Error('Database integrity check failed. Restore your data folder from backup.');
       const version = store.get('PRAGMA user_version').user_version;
-      if (version > 3) throw new Error('This data folder was created by a newer Portal version.');
+      if (version > 4) throw new Error('This data folder was created by a newer Portal version.');
       store.db.exec(`
         PRAGMA foreign_keys = ON;
         PRAGMA secure_delete = ON;
@@ -56,6 +56,16 @@ class Store {
         store.db.exec("ALTER TABLE documents ADD COLUMN analysis_json TEXT NOT NULL DEFAULT '{}'");
         store.db.exec('ALTER TABLE documents ADD COLUMN reprocess INTEGER NOT NULL DEFAULT 0');
         store.db.exec('PRAGMA user_version = 3');
+      }
+      if (version < 4) {
+        store.db.exec("ALTER TABLE documents ADD COLUMN feedback_json TEXT NOT NULL DEFAULT '[]'");
+        // Older versions did not distinguish accepted values from manual corrections.
+        // Keep all nonempty reviewed values until the reviewer explicitly releases them.
+        for (const row of store.all("SELECT id, values_json FROM documents WHERE reviewed = 1 AND purged = 0")) {
+          const feedback = Object.entries(JSON.parse(row.values_json)).filter(([, value]) => String(value).trim()).map(([field]) => ({ field, status: 'corrected', updatedAt: new Date().toISOString() }));
+          store.run('UPDATE documents SET feedback_json = ? WHERE id = ?', [JSON.stringify(feedback), row.id]);
+        }
+        store.db.exec('PRAGMA user_version = 4');
       }
       const prior = store.get("SELECT value FROM settings WHERE key = 'data_directory'")?.value;
       if (prior && prior !== directory) {

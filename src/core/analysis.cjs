@@ -1,6 +1,7 @@
 'use strict';
 
 const { discoverFields, fieldName, mergeFields, extractFields } = require('./extraction.cjs');
+const { applyHints } = require('./teaching.cjs');
 
 const PROFILES = {
   standard: { label: 'Standard', dpi: 150, timeoutMs: 120000 },
@@ -186,6 +187,10 @@ function analyzeDocument(pages, existing = [], mode = 'standard') {
   const fields = mergeFields(existing, result.discovered);
   const extracted = extractFields(text, fields);
   for (const field of result.discovered) if (!extracted.values[field.name]) extracted.values[field.name] = field.value;
+  const taught = applyHints(pages, fields);
+  Object.assign(extracted.values, taught.values);
+  result.analysis.taughtFields = taught.results;
+  for (const field of taught.results.filter(field => field.status !== 'matched')) result.analysis.warnings.push(`${field.label}: saved source label "${field.anchor}" ${field.status === 'ambiguous' ? 'has multiple matches' : 'did not find a value'}. Check this field during review.`);
   extracted.missing = fields.filter(field => field.required && !extracted.values[field.name]).map(field => field.name);
   return { ...result, ...extracted };
 }
