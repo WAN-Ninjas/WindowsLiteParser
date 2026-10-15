@@ -18,6 +18,16 @@ async function run({ service, window }) {
   const evaluate = code => window.webContents.executeJavaScript(code);
   try {
     await until(() => evaluate('Boolean(document.querySelector("#new-button") && window.portal)'), 'renderer ready');
+    // Exercise the real toggle, its SQLite preference, and restoration after a reload.
+    if (await evaluate('document.documentElement.dataset.theme === "dark"')) {
+      await evaluate('document.querySelector("#theme-toggle").click();');
+      await until(() => evaluate('document.documentElement.dataset.theme === "light" && !document.querySelector("#theme-toggle").disabled'), 'light mode');
+    }
+    await evaluate('document.querySelector("#theme-toggle").click();');
+    await until(() => evaluate('document.documentElement.dataset.theme === "dark" && !document.querySelector("#theme-toggle").disabled'), 'dark mode');
+    assert.equal(service.theme(), 'dark');
+    await new Promise(resolve => { window.webContents.once('did-finish-load', resolve); window.webContents.reload(); });
+    await until(() => evaluate('Boolean(document.querySelector("#theme-toggle")?.textContent.includes("Light mode")) && document.documentElement.dataset.theme === "dark"'), 'saved dark mode after reload');
     await evaluate('document.querySelector("#new-button").click(); document.querySelector("#collection-name").value="Smoke project"; document.querySelector("#create-form").requestSubmit();');
     await until(() => service.snapshot().collections.some(row => row.name === 'Smoke project'), 'project created from UI');
     const project = service.snapshot().collections.find(row => row.name === 'Smoke project');
@@ -129,7 +139,7 @@ async function run({ service, window }) {
     }
     assert.equal(await evaluate('typeof window.require'), 'undefined');
     assert.equal(await evaluate('typeof window.process'), 'undefined');
-    console.log('SMOKE PASSED: source selection, verified field teaching, future-document extraction, persistent missed-field flags, protected corrections, review reanalysis, multiline CSV review, project and quick creation, native parsing, offline OCR, renderer isolation.');
+    console.log('SMOKE PASSED: dark mode toggle and persistence, source selection, verified field teaching, future-document extraction, persistent missed-field flags, protected corrections, review reanalysis, multiline CSV review, project and quick creation, native parsing, offline OCR, renderer isolation.');
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 }
 

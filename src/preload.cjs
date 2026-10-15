@@ -2,6 +2,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('portal', {
+  theme: value => ipcRenderer.invoke('portal:theme', value),
   state: (id, options) => ipcRenderer.invoke('portal:state', id, options),
   create: config => ipcRenderer.invoke('portal:create', config),
   import: (id, folder = false) => ipcRenderer.invoke('portal:import', id, folder),

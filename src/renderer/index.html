@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'">
   <title>LiteParse Portal</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css">
   <script defer src="app.js"></script>
 </head>
@@ -20,11 +21,11 @@
       <div class="local-badge"><span class="status-dot"></span> Runs on your computer</div>
       <p>No account. No uploads.<br>Your documents stay here.</p>
       <button class="text-button" id="open-data">Open data folder ↗</button>
-      <span class="version">LiteParse Portal · v0.3.0</span>
+      <span class="version">LiteParse Portal · v0.3.1</span>
     </div>
   </aside>
   <main>
-    <header class="topbar"><span id="breadcrumb">Workspace <span>/</span> Projects</span><div class="queue-status"><span class="status-dot"></span><span id="queue-status">Ready to convert</span><button id="pause-button" class="small-button">Pause</button></div></header>
+    <header class="topbar"><span id="breadcrumb">Workspace <span>/</span> Projects</span><div class="queue-status"><span class="status-dot"></span><span id="queue-status">Ready to convert</span><button id="pause-button" class="small-button">Pause</button><button id="theme-toggle" class="small-button theme-toggle" aria-label="Switch to dark mode">☾ Dark mode</button></div></header>
     <section class="page-heading"><div><div class="eyebrow">DOCUMENTS → STRUCTURED DATA</div><h1 id="page-title">Your projects</h1><p id="page-description">A home for documents that keep coming. Import, review, and grow your CSV.</p></div><button class="primary" id="new-button">＋ New project</button></section>
     <div id="fatal-banner" class="alert error" hidden></div>
     <section class="stats"><div><span class="stat-icon purple">▤</span><div><b id="stat-documents">0</b><span>Documents imported</span></div></div><div><span class="stat-icon green">✓</span><div><b id="stat-completed">0</b><span>Documents converted</span></div></div><div><span class="stat-icon amber">◷</span><div><b id="stat-review">0</b><span>Waiting for review</span></div></div></section>

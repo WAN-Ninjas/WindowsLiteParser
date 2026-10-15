@@ -9,14 +9,14 @@ Download a Windows portable `.exe`, or extract the Windows ZIP and run **LitePar
 On Linux, download the `.AppImage`, mark it executable, and launch it as your normal user:
 
 ```sh
-chmod +x LiteParse-Portal-0.3.0-linux-x86_64.AppImage
-./LiteParse-Portal-0.3.0-linux-x86_64.AppImage
+chmod +x LiteParse-Portal-0.3.1-linux-x86_64.AppImage
+./LiteParse-Portal-0.3.1-linux-x86_64.AppImage
 ```
 
 The AppImage uses the pinned modern static runtime rather than the legacy FUSE 2 runtime. If FUSE mounting is unavailable, its built-in extraction mode runs without installing FUSE or using administrator permissions:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.3.0-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.3.1-linux-x86_64.AppImage
 ```
 
 Extraction mode unpacks to a temporary directory and cleans it up when the app closes. Project data stays beside the original AppImage in **LiteParse Portal Data**. You can alternatively extract the `.tar.gz` and launch `liteparse-portal`.
@@ -31,6 +31,7 @@ Both formats include Electron, the parser, PDFium, SQLite, and the English OCR m
 6. **Retention:** choose this when creating a project or change it in the project detail. **Keep document content long term** retains imported copies, page text, and extracted values. **Remove content after review & CSV export** deletes that content only after you mark a document reviewed and the CSV has been saved successfully. Unreviewed and failed documents stay available locally. Minimal IDs, content hashes, status, and timestamps remain for duplicate detection. Previously exported-only rows are read from the existing CSV when the schema expands. Keep that CSV backed up: its records cannot be reconstructed from the database after removal. Changing back to “keep” applies to remaining and future content; it cannot restore removed data. Deletion is logical deletion, not a secure disk wipe.
 7. **Analysis quality:** new projects and quick conversions default to **High accuracy**, which uses positioned text, native table cells, PDF form fields, invoice layout rules, and 300 DPI English OCR for scans. **Standard** uses the original text discovery and 150 DPI OCR. Digital text is read directly; increasing OCR resolution helps scans rather than rewriting clear embedded text. Change **Analysis quality** in a project or conversion to affect waiting and future files. A running file finishes with its original setting.
 8. **Reanalyze:** use the document's **Reanalyze** button or **Save draft & reanalyze** inside Review to apply the selected quality to a retained source without creating a duplicate. Existing CSV values remain available while it runs. Success refreshes automatic values and returns the document to **Needs review**; failure keeps the previous result and displays the error. Saved manual corrections and missed-field flags survive reanalysis. **Allow automatic extraction** under a corrected field releases its protection for a later reanalysis. Removed source content cannot be reanalyzed. Existing project columns remain to preserve history; start a new conversion if you want a fresh schema. Review shows the analysis mode, table row counts, warnings, and applicable line-item/total checks. These checks describe the original extraction, not subsequent manual edits.
+9. **Appearance:** use **Dark mode / Light mode** in the top-right corner. Your choice is saved in the local SQLite settings and travels with the data folder. The first launch follows your system theme until you choose a mode. Dialogs, review fields, teaching controls, source text, and native dialogs use the selected appearance.
 
 ## Teaching and flagging fields during review
 

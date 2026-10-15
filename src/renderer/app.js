@@ -39,6 +39,7 @@ async function refresh() {
 
 function navigate(nextKind, id = null) { kind = nextKind; selectedId = id; currentPage = 0; $('#status-filter').value = 'all'; refresh(); }
 function render() {
+  window.portalAppearance.set(state.theme);
   const quick = kind === 'quick';
   const collection = state.collections.find(item => item.id === selectedId);
   const collections = state.collections.filter(item => item.kind === kind);
@@ -289,6 +290,18 @@ $('#status-filter').onchange = () => { currentPage = 0; refresh(); };
 $('#previous-page').onclick = () => { currentPage = Math.max(0, currentPage - 1); refresh(); };
 $('#next-page').onclick = () => { currentPage++; refresh(); };
 $('#pause-button').onclick = event => action(event.currentTarget, async () => { await window.portal.pause(); await refresh(); });
+function renderThemeButton() {
+  const dark = document.documentElement.dataset.theme === 'dark';
+  $('#theme-toggle').textContent = dark ? '☀ Light mode' : '☾ Dark mode';
+  $('#theme-toggle').setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+  $('#theme-toggle').title = dark ? 'Switch to light mode' : 'Switch to dark mode';
+}
+window.addEventListener('portal-theme-change', renderThemeButton);
+renderThemeButton();
+$('#theme-toggle').onclick = event => action(event.currentTarget, async () => {
+  const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  await window.portal.theme(theme); await refresh();
+});
 $('#open-data').onclick = event => action(event.currentTarget, () => window.portal.revealData());
 $('#import-files').onclick = event => importDocuments(event.currentTarget, false);
 $('#import-folder').onclick = event => importDocuments(event.currentTarget, true);

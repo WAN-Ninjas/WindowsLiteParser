@@ -1,6 +1,6 @@
 'use strict';
 
-const { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, session } = require('electron');
+const { app, BrowserWindow, dialog, ipcMain, shell, utilityProcess, session, nativeTheme } = require('electron');
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -97,6 +97,10 @@ function registerHandlers() {
     await service.reanalyze(id); return true;
   });
   handle('portal:pause', () => service.togglePause());
+  handle('portal:theme', async value => {
+    await service.setTheme(value); nativeTheme.themeSource = value;
+    window.setBackgroundColor(nativeTheme.shouldUseDarkColors ? '#151820' : '#f6f7fb');
+  });
 }
 
 async function boot() {
@@ -104,13 +108,14 @@ async function boot() {
   const store = await Store.open(directory);
   const tessdataPath = app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(app.getAppPath(), 'assets', 'tessdata');
   service = new PortalService(store, directory, new ParserRunner(() => utilityProcess.fork(path.join(__dirname, 'parser-worker.cjs'), [], { stdio: 'pipe', serviceName: 'Document parser' }), null, tessdataPath));
+  nativeTheme.themeSource = service.theme();
   // The application and parser have no online features.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));
   registerHandlers();
   window = new BrowserWindow({
     width: 1360, height: 900, minWidth: 1000, minHeight: 700, show: false,
-    title: 'LiteParse Portal', backgroundColor: '#f6f7fb', autoHideMenuBar: true,
+    title: 'LiteParse Portal', backgroundColor: nativeTheme.shouldUseDarkColors ? '#151820' : '#f6f7fb', autoHideMenuBar: true,
     webPreferences: { preload: path.join(__dirname, 'preload.cjs'), nodeIntegration: false, contextIsolation: true, sandbox: true, webviewTag: false, spellcheck: false }
   });
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));

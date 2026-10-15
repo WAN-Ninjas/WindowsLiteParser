@@ -75,7 +75,17 @@ class PortalService extends EventEmitter {
       FROM documents WHERE collection_id = ?${predicate} ORDER BY sequence DESC LIMIT 100 OFFSET ?`, [String(id), page * 100])
       .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json), analysis: JSON.parse(row.analysis_json), feedback: JSON.parse(row.feedback_json) })) : [];
     const counts = this.store.all('SELECT status, COUNT(*) AS count FROM documents GROUP BY status');
-    return { collections, documents, counts, page, documentTotal, pageSize: 100, paused: this.paused, fatalError: this.fatalError, dataDirectory: this.directory, defaultFields: DEFAULT_FIELDS };
+    return { collections, documents, counts, page, documentTotal, pageSize: 100, paused: this.paused, fatalError: this.fatalError, dataDirectory: this.directory, defaultFields: DEFAULT_FIELDS, theme: this.theme() };
+  }
+  theme() {
+    const value = this.store.get("SELECT value FROM settings WHERE key = 'theme'")?.value;
+    return ['light', 'dark'].includes(value) ? value : 'system';
+  }
+  async setTheme(value) {
+    this.guard();
+    if (!['light', 'dark'].includes(value)) throw new Error('Choose light or dark mode.');
+    await this.store.transaction(() => this.store.run("INSERT OR REPLACE INTO settings(key, value) VALUES('theme', ?)", [value]));
+    this.emit('change');
   }
   importPaths(id, inputs) {
     const operation = this.imports.then(() => this._importPaths(id, inputs));
