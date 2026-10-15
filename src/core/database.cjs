@@ -15,7 +15,7 @@ class Store {
       await fs.promises.chmod(filename, 0o600);
       if (store.get('PRAGMA integrity_check').integrity_check !== 'ok') throw new Error('Database integrity check failed. Restore your data folder from backup.');
       const version = store.get('PRAGMA user_version').user_version;
-      if (version > 2) throw new Error('This data folder was created by a newer Portal version.');
+      if (version > 3) throw new Error('This data folder was created by a newer Portal version.');
       store.db.exec(`
         PRAGMA foreign_keys = ON;
         PRAGMA secure_delete = ON;
@@ -50,6 +50,12 @@ class Store {
         store.db.exec('ALTER TABLE collections ADD COLUMN retain_content INTEGER NOT NULL DEFAULT 1');
         store.db.exec('ALTER TABLE documents ADD COLUMN purged INTEGER NOT NULL DEFAULT 0');
         store.db.exec('PRAGMA user_version = 2');
+      }
+      if (version < 3) {
+        store.db.exec("ALTER TABLE collections ADD COLUMN analysis_mode TEXT NOT NULL DEFAULT 'standard'");
+        store.db.exec("ALTER TABLE documents ADD COLUMN analysis_json TEXT NOT NULL DEFAULT '{}'");
+        store.db.exec('ALTER TABLE documents ADD COLUMN reprocess INTEGER NOT NULL DEFAULT 0');
+        store.db.exec('PRAGMA user_version = 3');
       }
       const prior = store.get("SELECT value FROM settings WHERE key = 'data_directory'")?.value;
       if (prior && prior !== directory) {

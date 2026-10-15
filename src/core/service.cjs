@@ -7,6 +7,7 @@ const { EventEmitter } = require('node:events');
 const { DEFAULT_FIELDS, validateFields, mergeFields, fieldName } = require('./extraction.cjs');
 const { walk, stageFile, supported, inside } = require('./files.cjs');
 const { exportCsv } = require('./csv.cjs');
+const { profile } = require('./analysis.cjs');
 
 class PortalService extends EventEmitter {
   constructor(store, directory, parser) {
@@ -15,6 +16,7 @@ class PortalService extends EventEmitter {
     this.running = false; this.stopping = false; this.paused = false;
     this.imports = Promise.resolve(); this.exports = Promise.resolve();
     this.seen = new Map(); this.polling = false; this.fatalError = '';
+    this.purging = new Set();
   }
   async start() {
     await fs.mkdir(path.join(this.directory, 'sources'), { recursive: true });
@@ -36,12 +38,13 @@ class PortalService extends EventEmitter {
     if (!row) throw new Error('Project or conversion not found.');
     return row;
   }
-  async createCollection({ kind = 'project', name, fields = DEFAULT_FIELDS, watchPath = '', retainContent = true }) {
+  async createCollection({ kind = 'project', name, fields = DEFAULT_FIELDS, watchPath = '', retainContent = true, analysisMode = 'high' }) {
     this.guard();
     if (!['project', 'quick'].includes(kind)) throw new Error('Invalid conversion type.');
     name = String(name || '').trim();
     if (!name || name.length > 100) throw new Error('Enter a name of at most 100 characters.');
     fields = validateFields(fields);
+    profile(analysisMode);
     if (watchPath) {
       watchPath = path.resolve(watchPath);
       if (inside(watchPath, this.directory) || inside(this.directory, watchPath)) throw new Error('Choose a watched folder separate from the Portal data folder.');
@@ -50,8 +53,8 @@ class PortalService extends EventEmitter {
     const id = randomUUID();
     const output = path.join(this.directory, 'exports', `${id}.csv`);
     await this.store.transaction(() => this.store.run(
-      'INSERT INTO collections(id, kind, name, fields, watch_path, output_path, created_at, retain_content) VALUES(?,?,?,?,?,?,?,?)',
-      [id, kind, name, JSON.stringify(fields), watchPath, output, new Date().toISOString(), retainContent ? 1 : 0]));
+      'INSERT INTO collections(id, kind, name, fields, watch_path, output_path, created_at, retain_content, analysis_mode) VALUES(?,?,?,?,?,?,?,?,?)',
+      [id, kind, name, JSON.stringify(fields), watchPath, output, new Date().toISOString(), retainContent ? 1 : 0, analysisMode]));
     await this.updateExport(id);
     this.emit('change');
     return id;
@@ -67,9 +70,9 @@ class PortalService extends EventEmitter {
     const predicate = predicates[options.filter] ?? '';
     const documentTotal = id ? this.store.get(`SELECT COUNT(*) AS count FROM documents WHERE collection_id = ?${predicate}`, [String(id)]).count : 0;
     const page = Math.min(Math.max(0, Math.floor(Number(options.page) || 0)), Math.max(0, Math.ceil(documentTotal / 100) - 1));
-    const documents = id ? this.store.all(`SELECT id, name, status, error, page_count, bytes, values_json, missing_json, reviewed, created_at, purged
+    const documents = id ? this.store.all(`SELECT id, name, status, error, page_count, bytes, values_json, missing_json, reviewed, created_at, purged, reprocess, analysis_json
       FROM documents WHERE collection_id = ?${predicate} ORDER BY sequence DESC LIMIT 100 OFFSET ?`, [String(id), page * 100])
-      .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json) })) : [];
+      .map(row => ({ ...row, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json), analysis: JSON.parse(row.analysis_json) })) : [];
     const counts = this.store.all('SELECT status, COUNT(*) AS count FROM documents GROUP BY status');
     return { collections, documents, counts, page, documentTotal, pageSize: 100, paused: this.paused, fatalError: this.fatalError, dataDirectory: this.directory, defaultFields: DEFAULT_FIELDS };
   }
@@ -121,10 +124,13 @@ class PortalService extends EventEmitter {
         await this.store.transaction(() => this.store.run("UPDATE documents SET status = 'processing', error = '' WHERE id = ?", [doc.id]));
         this.emit('change');
         let parsed;
-        try { parsed = await this.parser.parse(doc.staged_path, JSON.parse(this.collection(doc.collection_id).fields)); }
+        try {
+          const collection = this.collection(doc.collection_id);
+          parsed = await this.parser.parse(doc.staged_path, JSON.parse(collection.fields), collection.analysis_mode);
+        }
         catch (error) {
-          await this.store.transaction(() => this.store.run('UPDATE documents SET status = ?, error = ? WHERE id = ?',
-            [this.stopping ? 'queued' : 'failed', this.stopping ? '' : error.message.slice(0, 4000), doc.id]));
+          await this.store.transaction(() => this.store.run('UPDATE documents SET status = ?, error = ?, reprocess = ? WHERE id = ?',
+            [this.stopping ? 'queued' : doc.reprocess ? 'completed' : 'failed', this.stopping ? '' : `${doc.reprocess ? 'Reanalysis failed; previous result kept. ' : ''}${error.message}`.slice(0, 4000), this.stopping ? doc.reprocess : 0, doc.id]));
           this.emit('change'); continue;
         }
         // This persistence error is fatal; do not mislabel a successful parse as a bad document.
@@ -133,8 +139,8 @@ class PortalService extends EventEmitter {
           this.store.run('UPDATE collections SET fields = ? WHERE id = ?', [JSON.stringify(fields), doc.collection_id]);
           this.store.run('DELETE FROM pages WHERE document_id = ?', [doc.id]);
           for (const page of parsed.pages) this.store.run('INSERT INTO pages(document_id, number, text) VALUES(?,?,?)', [doc.id, page.number, page.text]);
-          this.store.run("UPDATE documents SET status = 'completed', page_count = ?, values_json = ?, missing_json = ?, reviewed = 0, error = '' WHERE id = ?",
-            [parsed.pages.length, JSON.stringify(parsed.values), JSON.stringify(parsed.missing), doc.id]);
+          this.store.run("UPDATE documents SET status = 'completed', page_count = ?, values_json = ?, missing_json = ?, analysis_json = ?, reprocess = 0, reviewed = 0, error = '' WHERE id = ?",
+            [parsed.pages.length, JSON.stringify(parsed.values), JSON.stringify(parsed.missing), JSON.stringify(parsed.analysis || {}), doc.id]);
         });
         await this.updateExport(doc.collection_id);
         this.emit('change');
@@ -149,6 +155,23 @@ class PortalService extends EventEmitter {
     await this.store.transaction(() => this.store.run("UPDATE documents SET status = 'queued', error = '' WHERE id = ?", [doc.id]));
     this.emit('change'); this.pump();
   }
+  async setAnalysisMode(id, mode) {
+    this.guard(); this.collection(id); profile(mode);
+    await this.store.transaction(() => this.store.run('UPDATE collections SET analysis_mode = ? WHERE id = ?', [mode, id]));
+    this.emit('change');
+  }
+  async reanalyze(id) {
+    this.guard();
+    const doc = this.store.get("SELECT * FROM documents WHERE id = ? AND status = 'completed' AND purged = 0", [String(id)]);
+    if (!doc) throw new Error('Only completed documents with retained source content can be reanalyzed.');
+    await fs.access(doc.staged_path);
+    await this.store.transaction(() => {
+      const current = this.store.get('SELECT status, purged FROM documents WHERE id = ?', [doc.id]);
+      if (current.status !== 'completed' || current.purged || this.purging.has(doc.id)) throw new Error('Document content is being removed or processed.');
+      this.store.run("UPDATE documents SET status = 'queued', reprocess = 1, error = '' WHERE id = ?", [doc.id]);
+    });
+    this.emit('change'); this.pump();
+  }
   document(id) {
     const row = this.store.get("SELECT * FROM documents WHERE id = ? AND status = 'completed'", [String(id)]);
     if (!row) throw new Error('The document has not finished processing.');
@@ -157,7 +180,7 @@ class PortalService extends EventEmitter {
     const pages = this.store.all('SELECT number, text FROM pages WHERE document_id = ? ORDER BY number', [row.id]);
     let remaining = 200000;
     return { id: row.id, name: row.name, values: JSON.parse(row.values_json), missing: JSON.parse(row.missing_json),
-      fields: JSON.parse(collection.fields), reviewed: Boolean(row.reviewed),
+      fields: JSON.parse(collection.fields), reviewed: Boolean(row.reviewed), analysis: JSON.parse(row.analysis_json),
       text: pages.map(page => { const text = `--- Page ${page.number} ---\n${page.text}\n`; const part = text.slice(0, Math.max(0, remaining)); remaining -= text.length; return part; }).join('\n'),
       truncated: remaining < 0 };
   }
@@ -170,8 +193,8 @@ class PortalService extends EventEmitter {
     const clean = {};
     for (const field of fields) {
       const value = newFields.find(item => item.name === field.name)?.value ?? values?.[field.name] ?? '';
-      if (typeof value !== 'string' || value.length > 10000) throw new Error('Each field value must be text of at most 10,000 characters.');
-      clean[field.name] = value.trim();
+      if (typeof value !== 'string' || value.length > 1000000) throw new Error('Each field value must be text of at most 1,000,000 characters.');
+      clean[field.name] = /^(?:line_item_|table_\d+_)/.test(field.name) ? value : value.trim();
     }
     const missing = fields.filter(field => field.required && !clean[field.name]).map(field => field.name);
     if (missing.length) throw new Error(`Fill the required fields before marking reviewed: ${missing.join(', ')}`);
@@ -207,17 +230,18 @@ class PortalService extends EventEmitter {
   async purgeExported(exported) {
     for (const row of exported.filter(doc => doc.reviewed && !doc.purged)) {
       const current = this.store.get('SELECT * FROM documents WHERE id = ?', [row.id]);
-      if (!current || current.purged || current.values_json !== row.values_json || !current.reviewed) continue;
+      if (!current || current.purged || current.reprocess || current.values_json !== row.values_json || !current.reviewed) continue;
+      this.purging.add(row.id);
       try { await fs.rm(current.staged_path, { force: true }); }
       catch (error) {
         await this.store.transaction(() => this.store.run('UPDATE collections SET export_error = ? WHERE id = ?', [`CSV saved, but local source cleanup failed: ${error.message}`, row.collection_id]));
         continue;
-      }
+      } finally { this.purging.delete(row.id); }
       await this.store.transaction(() => {
-        const latest = this.store.get('SELECT values_json, reviewed, purged FROM documents WHERE id = ?', [row.id]);
-        if (latest.purged || !latest.reviewed || latest.values_json !== row.values_json) return;
+        const latest = this.store.get('SELECT values_json, reviewed, purged, reprocess FROM documents WHERE id = ?', [row.id]);
+        if (latest.purged || latest.reprocess || !latest.reviewed || latest.values_json !== row.values_json) return;
         this.store.run('DELETE FROM pages WHERE document_id = ?', [row.id]);
-        this.store.run("UPDATE documents SET purged = 1, values_json = '{}', missing_json = '[]', name = 'Exported document', source_path = '', staged_path = '' WHERE id = ?", [row.id]);
+        this.store.run("UPDATE documents SET purged = 1, values_json = '{}', missing_json = '[]', analysis_json = '{}', name = 'Exported document', source_path = '', staged_path = '' WHERE id = ?", [row.id]);
       });
     }
   }

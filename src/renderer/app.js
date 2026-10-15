@@ -94,6 +94,7 @@ function renderDetail(collection) {
   $('#stop-watch').hidden = !collection.watch_path;
   $('#output-path').textContent = collection.output_path;
   $('#retention-select').value = collection.retain_content ? 'keep' : 'remove';
+  $('#analysis-select').value = collection.analysis_mode;
   const alerts = [collection.watch_error, collection.export_error].filter(Boolean);
   $('#project-alert').hidden = !alerts.length;
   $('#project-alert').textContent = alerts.join('\n');
@@ -102,7 +103,7 @@ function renderDetail(collection) {
   const body = $('#documents'); body.replaceChildren();
   for (const doc of documents) {
     const row = element('tr');
-    const name = element('td'); name.append(element('span', doc.name, 'file-name'), element('span', `${(doc.bytes / 1024).toFixed(0)} KB${doc.page_count ? ` · ${doc.page_count} page${doc.page_count === 1 ? '' : 's'}` : ''}`, 'file-meta')); name.title = doc.name;
+    const name = element('td'); name.append(element('span', doc.name, 'file-name'), element('span', `${(doc.bytes / 1024).toFixed(0)} KB${doc.page_count ? ` · ${doc.page_count} page${doc.page_count === 1 ? '' : 's'}` : ''}${doc.analysis.mode ? ` · ${doc.analysis.mode === 'high' ? 'High accuracy' : 'Standard'}` : ''}`, 'file-meta')); name.title = doc.name;
     const fields = element('td', doc.status === 'completed' ? `${collection.fields.length - doc.missing.length} / ${collection.fields.length} required & optional` : '—');
     // Count all extracted fields, including optional blanks, accurately.
     if (doc.status === 'completed') fields.textContent = `${collection.fields.filter(field => Boolean(doc.values[field.name])).length} / ${collection.fields.length} fields`;
@@ -110,10 +111,17 @@ function renderDetail(collection) {
     if (doc.status === 'completed') { label = doc.purged ? '↗ CSV only' : doc.reviewed ? '✓ Reviewed' : '◷ Needs review'; css = doc.reviewed ? 'completed' : 'review'; }
     else label = { failed: 'Failed', queued: 'Queued', processing: 'Converting…' }[doc.status];
     const status = element('td'); status.append(element('span', label, `status ${css}`));
+    if (doc.analysis.warnings?.length) status.append(element('span', `${doc.analysis.warnings.length} analysis warning(s)`, 'file-meta'));
     if (doc.error) { status.title = doc.error; const note = element('span', doc.error.slice(0, 90), 'file-meta'); status.append(note); }
     const when = element('td', shortDate(doc.created_at));
     const control = element('td');
     if (doc.status === 'completed' && !doc.purged) { const button = element('button', doc.reviewed ? 'View' : 'Review →', 'text-button'); button.onclick = () => action(button, () => openReview(doc.id)); control.append(button); }
+    if (doc.status === 'completed' && !doc.purged) {
+      const button = element('button', 'Reanalyze', 'text-button');
+      button.title = 'Run again using the selected analysis quality';
+      button.onclick = () => action(button, async () => { if (await window.portal.reanalyze(doc.id)) toast('Queued for reanalysis. Previous CSV values are kept until it succeeds.'); await refresh(); });
+      control.append(button);
+    }
     if (doc.purged) { fields.textContent = 'Saved in CSV'; control.append(element('span', 'Content removed', 'file-meta')); }
     if (doc.status === 'failed') { const button = element('button', 'Retry', 'text-button'); button.onclick = () => action(button, () => window.portal.retry(doc.id)); control.append(button); }
     row.append(name, fields, status, when, control); body.append(row);
@@ -150,6 +158,7 @@ function openCreate() {
   $('#schema-fields').replaceChildren(...state.defaultFields.map(schemaField));
   $('#create-error').hidden = true;
   $('#create-retention').value = 'keep';
+  $('#create-analysis').value = 'high';
   $('#create-dialog').showModal(); $('#collection-name').focus();
 }
 
@@ -167,9 +176,18 @@ async function importDocuments(button, folder) {
 async function openReview(id) {
   const doc = await window.portal.document(id); reviewId = doc.id;
   $('#review-title').textContent = doc.name;
+  const analysis = doc.analysis;
+  const summary = [analysis.mode === 'high' ? 'High accuracy analysis' : analysis.mode === 'standard' ? 'Standard analysis' : 'Earlier conversion'];
+  if (analysis.tableCount) summary.push(`${analysis.tableCount} table(s) · ${analysis.tableRowCount} data row(s)`);
+  for (const check of analysis.checks || []) summary.push(`${check.passed ? '✓' : 'Check needed:'} ${check.label}`);
+  summary.push(...(analysis.warnings || []));
+  $('#analysis-summary').textContent = summary.join(' · ');
   const fields = doc.fields.map(field => {
     const label = element('label', `${field.label}${field.required ? ' *' : ''}`, `field-label${doc.missing.includes(field.name) ? ' missing' : ''}`);
-    const input = element('input'); input.name = field.name; input.value = doc.values[field.name] || ''; input.required = field.required; input.maxLength = 10000;
+    const value = doc.values[field.name] || '';
+    const input = element(value.includes('\n') || field.name.startsWith('line_item_') ? 'textarea' : 'input');
+    input.name = field.name; input.value = value; input.required = field.required; input.maxLength = 1000000;
+    if (input.tagName === 'TEXTAREA') input.rows = Math.min(10, Math.max(3, value.split('\n').length));
     if (doc.missing.includes(field.name)) label.append(element('span', 'Value not found — check the source text', 'missing-label'));
     label.append(input); return label;
   });
@@ -199,13 +217,14 @@ $('#stop-watch').onclick = event => action(event.currentTarget, async () => { aw
 $('#export-button').onclick = event => action(event.currentTarget, async () => { const result = await window.portal.export(selectedId); if (result) toast('CSV saved. Future imports and corrections will update this file.'); await refresh(); });
 $('#reveal-csv').onclick = event => action(event.currentTarget, () => window.portal.reveal(selectedId));
 $('#retention-select').onchange = event => action(event.currentTarget, async () => { await window.portal.retention(selectedId, event.target.value === 'keep'); await refresh(); toast('Retention setting saved. Previously removed content cannot be restored.'); });
+$('#analysis-select').onchange = event => action(event.currentTarget, async () => { await window.portal.analysisMode(selectedId, event.target.value); await refresh(); toast('Analysis quality saved. Use Reanalyze to update an existing result.'); });
 $('#add-field').onclick = () => $('#schema-fields').append(schemaField({ label: '', name: '', required: false, pattern: '' }));
 document.querySelectorAll('.close-dialog').forEach(button => { button.onclick = () => button.closest('dialog').close(); });
 $('#create-form').onsubmit = async event => {
   event.preventDefault(); const button = $('#create-submit'); button.disabled = true;
   try {
     const fields = [...document.querySelectorAll('.schema-field')].map(node => ({ name: node.querySelector('[data-role=name]').value.trim(), label: node.querySelector('[data-role=label]').value.trim(), pattern: node.querySelector('[data-role=pattern]').value, required: node.querySelector('[data-role=required]').checked }));
-    selectedId = await window.portal.create({ kind, name: $('#collection-name').value, fields, retainContent: $('#create-retention').value === 'keep' });
+    selectedId = await window.portal.create({ kind, name: $('#collection-name').value, fields, retainContent: $('#create-retention').value === 'keep', analysisMode: $('#create-analysis').value });
     $('#create-dialog').close(); $('#status-filter').value = 'all'; await refresh();
     toast('Ready. Your first document will establish the fields.');
   } catch (error) { $('#create-error').textContent = errorText(error); $('#create-error').hidden = false; }
@@ -214,7 +233,7 @@ $('#create-form').onsubmit = async event => {
 $('#review-form').onsubmit = async event => {
   event.preventDefault(); const button = event.currentTarget.querySelector('[type=submit]'); button.disabled = true;
   try {
-    const values = Object.fromEntries([...$('#review-fields').querySelectorAll('input')].map(input => [input.name, input.value]));
+    const values = Object.fromEntries([...$('#review-fields').querySelectorAll('input, textarea')].map(input => [input.name, input.value]));
     const additional = [...$('#additional-fields').children].map(node => ({ label: node.querySelector('[data-role=label]').value, value: node.querySelector('[data-role=value]').value }));
     await window.portal.review(reviewId, values, additional); $('#review-dialog').close(); toast('Review saved. Your CSV is up to date.'); await refresh();
   } catch (error) { $('#review-error').textContent = errorText(error); $('#review-error').hidden = false; }

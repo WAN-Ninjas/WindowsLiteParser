@@ -25,10 +25,10 @@ jobs:
       - run: npm test
       - name: Package Windows
         if: runner.os == 'Windows'
-        run: npm run dist:win
+        run: npm run dist:win -- --publish never
       - name: Package Linux
         if: runner.os == 'Linux'
-        run: npm run dist:linux
+        run: npm run dist:linux -- --publish never
       - name: Exercise packaged Windows application
         if: runner.os == 'Windows'
         run: npm run smoke:packaged

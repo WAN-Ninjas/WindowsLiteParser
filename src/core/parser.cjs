@@ -2,15 +2,18 @@
 
 const path = require('node:path');
 const { fork } = require('node:child_process');
+const { profile } = require('./analysis.cjs');
 
 class ParserRunner {
-  constructor(spawnWorker, timeoutMs = 120000, tessdataPath = path.join(__dirname, '..', '..', 'assets', 'tessdata')) {
+  constructor(spawnWorker, timeoutMs = null, tessdataPath = path.join(__dirname, '..', '..', 'assets', 'tessdata')) {
     this.spawnWorker = spawnWorker || (() => fork(path.join(__dirname, '..', 'parser-worker.cjs'), [], { stdio: ['ignore', 'ignore', 'pipe', 'ipc'] }));
     this.timeoutMs = timeoutMs;
     this.tessdataPath = tessdataPath;
     this.active = null;
   }
-  parse(file, fields) {
+  parse(file, fields, mode = 'standard') {
+    const quality = profile(mode);
+    const timeoutMs = this.timeoutMs ?? quality.timeoutMs;
     return new Promise((resolve, reject) => {
       const worker = this.spawnWorker();
       this.active = worker;
@@ -25,11 +28,11 @@ class ParserRunner {
         worker.kill();
         error ? reject(error) : resolve(result);
       };
-      const timer = setTimeout(() => finish(new Error('Parsing exceeded two minutes. Split the document or retry.')), this.timeoutMs);
+      const timer = setTimeout(() => finish(new Error(`Parsing exceeded ${Math.round(timeoutMs / 60000)} minutes. Split the document or retry.`)), timeoutMs);
       worker.once('message', result => finish(result.ok ? null : new Error(result.error), result));
       worker.once('error', error => finish(error));
       worker.once('exit', code => finish(new Error(`Parser exited unexpectedly (${code}). ${diagnostic}`)));
-      const message = { path: file, fields, tessdataPath: this.tessdataPath };
+      const message = { path: file, fields, tessdataPath: this.tessdataPath, analysisMode: quality.mode };
       try { if (worker.postMessage) worker.postMessage(message); else worker.send(message); }
       catch (error) { finish(error); }
     });

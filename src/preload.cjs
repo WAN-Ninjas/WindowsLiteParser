@@ -13,6 +13,8 @@ contextBridge.exposeInMainWorld('portal', {
   review: (id, values, additional) => ipcRenderer.invoke('portal:review', id, values, additional),
   retention: (id, retain) => ipcRenderer.invoke('portal:retention', id, retain),
   retry: id => ipcRenderer.invoke('portal:retry', id),
+  analysisMode: (id, mode) => ipcRenderer.invoke('portal:analysis-mode', id, mode),
+  reanalyze: id => ipcRenderer.invoke('portal:reanalyze', id),
   pause: () => ipcRenderer.invoke('portal:pause'),
   onChange: callback => { const listener = () => callback(); ipcRenderer.on('portal:changed', listener); return () => ipcRenderer.removeListener('portal:changed', listener); }
 });

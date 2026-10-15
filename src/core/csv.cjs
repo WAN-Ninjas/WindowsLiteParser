@@ -26,7 +26,7 @@ function csvData(store, collection) {
     }
     if (purged.some(row => !rows.has(row.id))) throw new Error('The CSV is missing previously exported-only records. Restore the complete CSV before exporting again.');
   }
-  const exported = store.all("SELECT * FROM documents WHERE collection_id = ? AND status = 'completed' AND purged = 0 ORDER BY sequence", [collection.id]);
+  const exported = store.all("SELECT * FROM documents WHERE collection_id = ? AND (status = 'completed' OR reprocess = 1) AND purged = 0 ORDER BY sequence", [collection.id]);
   for (const row of exported) {
     const values = JSON.parse(row.values_json);
     rows.set(row.id, { document_id: row.id, source_file: row.name, sha256: row.sha256, page_count: row.page_count,

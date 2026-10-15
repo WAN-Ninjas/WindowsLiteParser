@@ -228,6 +228,72 @@ test('parser worker enforces a hard timeout', async () => {
   await assert.rejects(parser.parse('ignored.pdf', []), /exceeded/); assert.equal(killed, true);
 });
 
+test('analysis settings reach workers and failed reanalysis preserves reviewed values and CSV rows', async t => {
+  let fail = false; let seenMode;
+  const parser = { stop() {}, async parse(file, fields, mode) {
+    seenMode = mode;
+    if (fail) throw new Error('Example parse failure');
+    return { pages: [{ number: 1, text: 'Total: $10.00' }], discovered: discoverFields('Total: $10.00'), values: { total: '$10.00' }, missing: [], analysis: { mode, warnings: [] } };
+  } };
+  const { service, store, input } = await fixture(t, parser);
+  const id = await service.createCollection({ kind: 'quick', name: 'Quality' });
+  assert.equal(service.collection(id).analysis_mode, 'high');
+  const file = path.join(input, 'example.pdf'); await fs.writeFile(file, 'example');
+  await service.importPaths(id, [file]); await complete(service); assert.equal(seenMode, 'high');
+  const doc = service.snapshot(id).documents[0];
+  await service.review(doc.id, { total: '$12.00' });
+  await service.setAnalysisMode(id, 'standard');
+  service.paused = true; await service.reanalyze(doc.id);
+  assert.equal(parse(csvFor(store, service.collection(id)), { columns: true, bom: true })[0].total, '$12.00');
+  fail = true; service.togglePause(); await complete(service);
+  assert.equal(seenMode, 'standard');
+  let retained = service.document(doc.id); assert.equal(retained.values.total, '$12.00'); assert.equal(retained.reviewed, true);
+  assert.equal(retained.analysis.mode, 'high'); assert.match(service.snapshot(id).documents[0].error, /previous result kept/);
+  fail = false; await service.reanalyze(doc.id); await complete(service);
+  retained = service.document(doc.id); assert.equal(retained.values.total, '$10.00'); assert.equal(retained.reviewed, false); assert.equal(retained.analysis.mode, 'standard');
+  assert.equal(service.snapshot(id).documents.length, 1);
+  await assert.rejects(service.setAnalysisMode(id, 'invalid'));
+});
+
+test('review preserves blank table cells and removal retention cannot purge active reanalysis', async t => {
+  const { service, store, input } = await fixture(t);
+  const id = await service.createCollection({ name: 'Table review' });
+  const file = path.join(input, 'table.pdf'); await fs.writeFile(file, 'Vendor: Example');
+  await service.importPaths(id, [file]); await complete(service);
+  const doc = service.snapshot(id).documents[0];
+  await service.review(doc.id, doc.values, [{ label: 'Line item date', value: 'placeholder' }]);
+  await service.review(doc.id, { ...service.document(doc.id).values, line_item_date: '\n2026-10-15\n' });
+  assert.equal(service.document(doc.id).values.line_item_date, '\n2026-10-15\n');
+  service.paused = true; await service.reanalyze(doc.id);
+  await service.setRetention(id, false);
+  assert.equal(store.get('SELECT purged FROM documents WHERE id = ?', [doc.id]).purged, 0);
+  service.togglePause(); await complete(service);
+  const next = service.document(doc.id); await service.review(doc.id, next.values);
+  assert.equal(service.snapshot(id).documents[0].purged, 1);
+  await assert.rejects(service.reanalyze(doc.id), /retained source/);
+});
+
+test('v2 data migrates to Standard analysis and keeps existing values', async t => {
+  const { service, store, data, input } = await fixture(t);
+  const id = await service.createCollection({ name: 'Previous version' });
+  const file = path.join(input, 'previous.pdf'); await fs.writeFile(file, 'Vendor: Example Existing Seller');
+  await service.importPaths(id, [file]); await complete(service);
+  await store.transaction(() => {
+    store.db.exec('ALTER TABLE collections DROP COLUMN analysis_mode');
+    store.db.exec('ALTER TABLE documents DROP COLUMN analysis_json');
+    store.db.exec('ALTER TABLE documents DROP COLUMN reprocess');
+    store.db.exec('PRAGMA user_version = 2');
+  });
+  await service.stop();
+  const reopened = await Store.open(data);
+  try {
+    assert.equal(reopened.get('PRAGMA user_version').user_version, 3);
+    const collection = reopened.get('SELECT * FROM collections WHERE id = ?', [id]);
+    assert.equal(collection.name, 'Previous version'); assert.equal(collection.analysis_mode, 'standard');
+    assert.equal(JSON.parse(reopened.get('SELECT values_json FROM documents WHERE collection_id = ?', [id]).values_json).vendor, 'Example Existing Seller');
+  } finally { await reopened.close(); }
+});
+
 test('real native LiteParse worker extracts a PDF using bundled assets', { timeout: 30000 }, async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'portal-real-')); t.after(() => fs.rm(root, { recursive: true, force: true }));
   const file = path.join(root, 'invoice.pdf'); await fs.writeFile(file, pdfFixture());

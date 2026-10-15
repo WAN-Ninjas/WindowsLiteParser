@@ -82,6 +82,16 @@ function registerHandlers() {
   handle('portal:review', (id, values, additional) => service.review(id, values, additional));
   handle('portal:retention', (id, retain) => service.setRetention(id, retain));
   handle('portal:retry', id => service.retry(id));
+  handle('portal:analysis-mode', (id, mode) => service.setAnalysisMode(id, mode));
+  handle('portal:reanalyze', async id => {
+    const doc = service.document(id);
+    if (doc.reviewed) {
+      const result = await dialog.showMessageBox(window, { type: 'question', buttons: ['Cancel', 'Reanalyze'], defaultId: 0, cancelId: 0,
+        message: 'Replace this reviewed result?', detail: 'Successful reanalysis replaces saved values and corrections, and marks the document for review again. The previous result stays in the CSV if reanalysis fails.' });
+      if (result.response !== 1) return false;
+    }
+    await service.reanalyze(id); return true;
+  });
   handle('portal:pause', () => service.togglePause());
 }
 
@@ -89,7 +99,7 @@ async function boot() {
   const directory = await dataDirectory();
   const store = await Store.open(directory);
   const tessdataPath = app.isPackaged ? path.join(process.resourcesPath, 'tessdata') : path.join(app.getAppPath(), 'assets', 'tessdata');
-  service = new PortalService(store, directory, new ParserRunner(() => utilityProcess.fork(path.join(__dirname, 'parser-worker.cjs'), [], { stdio: 'pipe', serviceName: 'Document parser' }), 120000, tessdataPath));
+  service = new PortalService(store, directory, new ParserRunner(() => utilityProcess.fork(path.join(__dirname, 'parser-worker.cjs'), [], { stdio: 'pipe', serviceName: 'Document parser' }), null, tessdataPath));
   // The application and parser have no online features.
   session.defaultSession.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
   session.defaultSession.webRequest.onBeforeRequest({ urls: ['http://*/*', 'https://*/*', 'ws://*/*', 'wss://*/*'] }, (_details, callback) => callback({ cancel: true }));

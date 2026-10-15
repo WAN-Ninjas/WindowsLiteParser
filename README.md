@@ -9,14 +9,14 @@ Download a Windows portable `.exe`, or extract the Windows ZIP and run **LitePar
 On Linux, download the `.AppImage`, mark it executable, and launch it as your normal user:
 
 ```sh
-chmod +x LiteParse-Portal-0.1.0-linux-x86_64.AppImage
-./LiteParse-Portal-0.1.0-linux-x86_64.AppImage
+chmod +x LiteParse-Portal-0.2.0-linux-x86_64.AppImage
+./LiteParse-Portal-0.2.0-linux-x86_64.AppImage
 ```
 
 The AppImage uses the pinned modern static runtime rather than the legacy FUSE 2 runtime. If FUSE mounting is unavailable, its built-in extraction mode runs without installing FUSE or using administrator permissions:
 
 ```sh
-APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.1.0-linux-x86_64.AppImage
+APPIMAGE_EXTRACT_AND_RUN=1 ./LiteParse-Portal-0.2.0-linux-x86_64.AppImage
 ```
 
 Extraction mode unpacks to a temporary directory and cleans it up when the app closes. Project data stays beside the original AppImage in **LiteParse Portal Data**. You can alternatively extract the `.tar.gz` and launch `liteparse-portal`.
@@ -24,19 +24,23 @@ Extraction mode unpacks to a temporary directory and cleans it up when the app c
 Both formats include Electron, the parser, PDFium, SQLite, and the English OCR model. Linux still needs a compatible desktop distribution's glibc, GTK, NSS, graphics/audio libraries, and working Chromium sandbox support. The tar.gz does not require FUSE. Neither format runs on every Linux distribution independently of system libraries. Do not launch the application as root. See the [AppImage extraction-mode documentation](https://docs.appimage.org/user-guide/troubleshooting/fuse.html#extract-and-run-type-2-appimages).
 
 1. **Projects:** create a named project. Import one file, select multiple files, or import a folder recursively. Optionally choose a watched folder, including its subfolders. Folder polling runs every four seconds while the application is open and waits for two stable observations before importing a file.
-2. **Automatic fields:** the first document establishes CSV columns from labeled values and aligned label/value pairs. Later documents can add columns automatically. Existing rows are preserved, with blanks for fields they did not contain. Every completed document becomes one row. Repeated labeled values are joined with newlines in the same cell.
+2. **Automatic fields:** the first document establishes CSV columns from labeled values and layout. Later documents can add columns automatically. Existing rows are preserved, with blanks for fields they did not contain. Every completed document becomes one row. Repeated labeled values are joined with newlines in the same cell. High accuracy table columns preserve every row, including repeated values and empty cells, as matching lines within each cell. For example, ten invoice line items remain one document row with ten lines per line-item column.
 3. **Review:** open a converted document, compare its fields with the extracted text, correct values, and add missed fields. Added fields become project columns. Every automatic extraction starts as **Needs review**, even when all fields appear filled.
 4. **CSV:** each project maintains one CSV automatically. **Save CSV as…** chooses the file that future imports and corrections will update. The export includes document ID, filename, SHA-256, page count, import time, review status, and discovered fields. Keep this file under Portal's control; use copies for spreadsheet analysis. If Excel locks it, the app keeps the data in SQLite and retries updating the CSV.
 5. **Quick conversions:** create a quick conversion for a single file or a batch. It uses the same automatic fields, review, retention, and CSV pipeline without a watched folder. History persists between sessions.
 6. **Retention:** choose this when creating a project or change it in the project detail. **Keep document content long term** retains imported copies, page text, and extracted values. **Remove content after review & CSV export** deletes that content only after you mark a document reviewed and the CSV has been saved successfully. Unreviewed and failed documents stay available locally. Minimal IDs, content hashes, status, and timestamps remain for duplicate detection. Previously exported-only rows are read from the existing CSV when the schema expands. Keep that CSV backed up: its records cannot be reconstructed from the database after removal. Changing back to “keep” applies to remaining and future content; it cannot restore removed data. Deletion is logical deletion, not a secure disk wipe.
+7. **Analysis quality:** new projects and quick conversions default to **High accuracy**, which uses positioned text, native table cells, PDF form fields, invoice layout rules, and 300 DPI English OCR for scans. **Standard** uses the original text discovery and 150 DPI OCR. Digital text is read directly; increasing OCR resolution helps scans rather than rewriting clear embedded text. Change **Analysis quality** in a project or conversion to affect waiting and future files. A running file finishes with its original setting.
+8. **Reanalyze:** use the document's **Reanalyze** button to apply the selected quality to a retained source without creating a duplicate. Existing CSV values remain available while it runs. Success replaces that document's extracted values and returns it to **Needs review**; failure keeps the previous result and displays the error. Replacing reviewed corrections requires confirmation. Removed source content cannot be reanalyzed. Existing project columns remain to preserve history; start a new conversion if you want a fresh schema. Review shows the analysis mode, table row counts, warnings, and applicable line-item/total checks. These checks describe the original extraction, not subsequent manual edits.
+
+When upgrading, close Portal and keep its **LiteParse Portal Data** folder. SQLite migrates automatically. Existing projects retain **Standard** until you change their quality setting. Back up the data folder and externally chosen CSVs before upgrading; older app versions cannot open the migrated database.
 
 ## Extraction scope
 
 PDF, PNG, JPEG, TIFF, BMP, and WebP inputs are accepted. English OCR is included for scanned documents. Microsoft Office and OpenDocument conversion are excluded because upstream requires a separately installed LibreOffice for those formats.
 
-Field discovery runs locally using deterministic text and layout rules. It does **not** use an LLM, a cloud API, or a fixed invoice template. Labels such as `Invoice #: 123`, `Supplier: Acme`, or `Department    Research` become fields. It does not reliably infer the meaning of unlabeled prose, arbitrary table relationships, or an unlabeled vendor address. Those documents need review and manually added fields. Text and OCR quality depend on the source. No claim of universal semantic extraction is made.
+Field discovery runs locally using deterministic text and layout rules, without an LLM or cloud API. Labels such as `Invoice #: 123`, `Supplier: Acme`, or `Department    Research` become fields. High accuracy additionally recognizes common invoice headings, identifiers, seller and billing blocks, and line-item columns. The schema still grows from detected fields rather than requiring a predefined list. These rules do not reliably infer the meaning of arbitrary prose or every invoice and table layout. Those documents need review and manually added fields. Unidentified table headers and applicable total mismatches are flagged for review. Text and OCR quality depend on the source; no universal semantic extraction or confidence score is claimed.
 
-Limits in this version: 100 MiB per input, 2,000 pages per document, 50 MiB extracted text per document, 250 fields per project. Review previews show the first 200,000 characters. The document list is paginated with 100 entries per page and filters apply across the entire project; CSV export includes all completed entries. Parsing uses one isolated worker at a time, with a two-minute hard timeout, so a stuck or crashed parser cannot permanently block the queue.
+Limits in this version: 100 MiB per input, 2,000 pages per document, 50 MiB extracted text per document, 250 fields per project, 1,000,000 characters per reviewed field. Review previews show the first 200,000 characters. The document list is paginated with 100 entries per page and filters apply across the entire project; CSV export includes all completed entries. Parsing uses one isolated worker at a time, with a two-minute hard timeout for Standard and ten minutes for High accuracy, so a stuck or crashed parser cannot permanently block the queue.
 
 ## Data and portability
 

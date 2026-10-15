@@ -20,7 +20,7 @@
       <div class="local-badge"><span class="status-dot"></span> Runs on your computer</div>
       <p>No account. No uploads.<br>Your documents stay here.</p>
       <button class="text-button" id="open-data">Open data folder ↗</button>
-      <span class="version">LiteParse Portal · v0.1.0</span>
+      <span class="version">LiteParse Portal · v0.2.0</span>
     </div>
   </aside>
   <main>
@@ -36,6 +36,7 @@
       <div class="project-settings"><div><span class="setting-icon">↻</span><div><b>Watched folder</b><span id="watch-path">Add files automatically while Portal is open</span></div></div><div class="actions"><button class="text-button" id="stop-watch" hidden>Stop watching</button><button class="secondary" id="watch-button">Choose folder</button></div></div>
       <div class="project-settings"><div><span class="setting-icon">↗</span><div><b>Output CSV</b><span id="output-path"></span></div></div><div class="actions"><button class="text-button" id="reveal-csv">Show file</button><button class="secondary" id="export-button">Save CSV as…</button></div></div>
       <div class="project-settings retention-settings"><div><span class="setting-icon">▤</span><div><b>Local database retention</b><span>Removing content keeps the CSV and duplicate-detection metadata. It cannot be restored from Portal.</span></div></div><select id="retention-select" aria-label="Local database retention"><option value="keep">Keep document content long term</option><option value="remove">Remove content after review & CSV export</option></select></div>
+      <div class="project-settings"><div><span class="setting-icon">✧</span><div><b>Analysis quality</b><span>Applies to waiting and new files. Use Reanalyze for an existing result.</span></div></div><select id="analysis-select" aria-label="Analysis quality"><option value="high">High accuracy · layout, tables & 300 DPI OCR</option><option value="standard">Standard · faster text analysis</option></select></div>
       <div id="project-alert" class="alert" hidden></div>
       <div class="document-toolbar"><h3>Documents <span id="document-count" class="count"></span></h3><label>Show <select id="status-filter"><option value="all">All documents</option><option value="needs_review">Needs review</option><option value="completed">Converted</option><option value="failed">Failed</option><option value="queued">Queued</option></select></label></div>
       <div class="table-wrap"><table><thead><tr><th>Document</th><th>Fields extracted</th><th>Status</th><th>Added</th><th></th></tr></thead><tbody id="documents"></tbody></table><div id="no-documents" class="table-empty" hidden>No documents yet. Add a file or import a folder to get started.</div></div>
@@ -48,6 +49,8 @@
     <form id="create-form"><div class="dialog-heading"><div><div class="eyebrow">SET UP YOUR CONVERSION</div><h2 id="create-title">New project</h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div>
       <label class="field-label">Name<input id="collection-name" maxlength="100" placeholder="e.g. Supplier invoices" required autocomplete="off"></label>
       <div class="template-info"><span>✧</span><div><b>Your documents define the fields</b><p>The first document establishes the columns. New labels found in later documents add columns automatically, preserving earlier rows. One document becomes one CSV row.</p></div></div>
+      <label class="field-label">Analysis quality<select id="create-analysis"><option value="high">High accuracy (recommended)</option><option value="standard">Standard</option></select></label>
+      <p class="footnote">High accuracy uses page layout, table cells, invoice structure and 300 DPI OCR for scans. It takes longer on scanned documents. Table rows appear on separate lines within each CSV cell, in matching order.</p>
       <label class="field-label">Local database retention<select id="create-retention"><option value="keep">Keep document content long term</option><option value="remove">Remove content after review & CSV export</option></select></label>
       <p class="footnote">All documents are staged in SQLite for review first. Removing content deletes imported copies, source text, and extracted values after review and a successful export. The CSV and minimal duplicate-detection metadata remain.</p>
       <div class="field-section-heading"><h3>Optional extra fields</h3><button type="button" id="add-field" class="text-button">＋ Add field</button></div>
@@ -59,7 +62,8 @@
   </dialog>
   <dialog id="review-dialog" class="review-dialog">
     <form id="review-form"><div class="dialog-heading"><div><div class="eyebrow">REVIEW EXTRACTED FIELDS</div><h2 id="review-title"></h2></div><button type="button" class="icon-button close-dialog" aria-label="Close">×</button></div>
-      <div class="review-layout"><section><div class="review-note">Compare each value with the source text. Add any missed labels; they become columns throughout this project.</div><div id="review-fields"></div><div id="additional-fields"></div><button type="button" class="text-button" id="review-add-field">＋ Add a missed field</button></section><section class="source-panel"><h3>Extracted source text</h3><pre id="source-text"></pre><p id="text-truncated" hidden>Preview limited to 200,000 characters.</p></section></div>
+      <div id="analysis-summary" class="review-note"></div>
+      <div class="review-layout"><section><div class="review-note">Compare each value with the source text. Table columns use matching lines for each row, including repeated values. Add any missed labels; they become columns throughout this project.</div><div id="review-fields"></div><div id="additional-fields"></div><button type="button" class="text-button" id="review-add-field">＋ Add a missed field</button></section><section class="source-panel"><h3>Extracted source text</h3><pre id="source-text"></pre><p id="text-truncated" hidden>Preview limited to 200,000 characters.</p></section></div>
       <div id="review-error" class="alert error" hidden></div><div class="dialog-footer"><button type="button" class="secondary close-dialog">Close</button><button class="primary" type="submit">Save & mark reviewed</button></div>
     </form>
   </dialog>
