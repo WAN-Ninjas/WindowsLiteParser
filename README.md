@@ -93,7 +93,28 @@ Windows release preparation also collects the Microsoft C++ runtime DLLs into th
 
 `npm run pack` produces an unpacked application for the current platform. `npm run smoke:packaged` exercises the actual packaged app, including renderer IPC, native PDF parsing, field expansion, review, and image OCR. `npm run smoke:appimage` runs those checks through the actual AppImage launcher and verifies that the database lives beside it, including a download path containing spaces. Set `PORTAL_TEST_APPIMAGE_EXTRACT=1` to exercise extraction mode without FUSE. On headless Linux prefix these commands with `xvfb-run -a`. For a restricted CI container only, `PORTAL_TEST_NO_SANDBOX=1` disables Chromium's OS sandbox for this test run; distributed launchers do not disable it.
 
-The CI workflow builds Windows and Linux packages on their own operating systems, runs the tests and packaged smoke checks, and uploads artifacts. Windows-on-Linux builds are not a substitute for Windows validation. macOS packaging, signing, and notarization remain future work. Current local artifacts are unsigned; publisher signing is a release concern and does not change the normal-user runtime design.
+The CI workflow builds Windows and Linux packages on their own operating systems, runs the tests and packaged smoke checks, and uploads artifacts. Windows-on-Linux builds are not a substitute for Windows validation. macOS packaging, signing, and notarization remain future work. Builds are currently unsigned; publisher signing is separate from release publication and does not change the normal-user runtime design.
+
+## Automated GitHub releases
+
+Application downloads are published at [GitHub Releases](https://github.com/WAN-Ninjas/WindowsLiteParser/releases). Branch pushes and pull requests build and test the app without publishing a release. Pushing a version tag automatically builds, tests, and publishes the release:
+
+```sh
+npm version patch --no-git-tag-version
+# Update the displayed version and any version-specific documentation too.
+git add package.json package-lock.json src/renderer/index.html README.md VALIDATION.md
+git commit -m "Release next version"
+git push origin main
+# Replace the example with the exact version now in package.json:
+git tag v0.3.2
+git push origin v0.3.2
+```
+
+The tag must exactly match `v` plus the version in both package files. For an already prepared version, push only its matching tag. Keep the UI version label in `src/renderer/index.html` and any version-specific documentation current when preparing an application update.
+
+The workflow publishes only after both native platform builds pass the core tests and packaged smoke checks. The release contains the Windows portable EXE and ZIP, Linux AppImage and tar.gz, and `SHA256SUMS.txt`. It verifies filenames, file formats, checksums, and uploaded sizes before publishing the draft. Smoke screenshots stay in Actions artifacts. Prerelease versions such as `v0.4.0-rc.1` are marked as prereleases.
+
+Publishing uses the repository's built-in `GITHUB_TOKEN`, with write access only in the release job; no personal access token or extra secret is required. A failed upload leaves a draft that can be resumed with **Re-run failed jobs** in Actions. Published downloads are kept unchanged on reruns; publish a new version to replace them. To explicitly rebuild an existing tag, use `gh workflow run build.yml --ref v0.3.1` with the desired tag. Running the workflow against a branch builds artifacts without publishing.
 
 ## Verification status
 
